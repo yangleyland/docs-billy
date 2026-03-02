@@ -1,0 +1,718 @@
+---
+title: "CuTe DSL"
+description: "Python DSL for writing high-performance CUDA kernels using CuTe abstractions"
+---
+
+The **CuTe DSL** (Domain-Specific Language) is a Python framework for writing high-performance CUDA kernels using CuTe's layout algebra and tensor abstractions. It provides a Pythonic interface to CUTLASS's CuTe library, enabling kernel development with automatic compilation to optimized PTX/SASS.
+
+## Overview
+
+CuTe DSL allows you to write CUDA kernels in Python that are compiled to efficient GPU code, with full access to:
+
+- **Layout Algebra** - Express complex memory access patterns
+- **Tensor Abstractions** - High-level tensor operations
+- **Hardware Features** - Tensor Cores, TMA, async copy, barriers
+- **JIT Compilation** - Automatic optimization and compilation
+
+<Note>
+  CuTe DSL kernels achieve performance comparable to hand-written CUDA C++ while offering Python's development productivity.
+</Note>
+
+## Installation
+
+```bash
+pip install nvidia-cutlass-dsl
+```
+
+Requirements:
+- CUDA 12.0+ (CUDA 13 for latest features)
+- Python 3.8+
+- GPU: Ampere (SM80+), Hopper (SM90), or Blackwell
+
+## Core Concepts
+
+### Decorators
+
+#### `@cute.kernel`
+
+Defines a CUDA kernel that runs on the GPU:
+
+```python
+import cutlass.cute as cute
+
+@cute.kernel
+def my_kernel(tensor: cute.Tensor):
+    tidx, tidy, tidz = cute.arch.thread_idx()
+    bidx, bidy, bidz = cute.arch.block_idx()
+    # Kernel code here
+```
+
+Key features:
+- Type annotations specify tensor types
+- Access thread/block indices with `cute.arch`
+- Use CuTe operations inside the kernel
+
+#### `@cute.jit`
+
+Marks a host function for JIT compilation:
+
+```python
+@cute.jit
+def launch_kernel(tensor):
+    my_kernel(tensor).launch(
+        grid=[num_blocks, 1, 1],
+        block=[num_threads, 1, 1]
+    )
+```
+
+### Layouts
+
+Layouts define the mapping between logical coordinates and memory addresses.
+
+#### Creating Layouts
+
+```python
+# Simple 2D layout: shape (M, N) with strides
+layout = cute.make_layout((16, 8), stride=(8, 1))  # Row-major
+
+# Column-major
+layout = cute.make_layout((16, 8), stride=(1, 16))
+
+# Using make_ordered_layout for convenience
+layout = cute.make_ordered_layout((16, 8), order=(1, 0))  # Row-major
+layout = cute.make_ordered_layout((16, 8), order=(0, 1))  # Column-major
+```
+
+#### Composed Layouts
+
+Create hierarchical layouts for tiling:
+
+```python
+# Tile a 128x128 matrix into 8x8 blocks
+outer = cute.make_layout((16, 16), stride=(8, 1))   # 16x16 tiles
+inner = cute.make_layout((8, 8), stride=(1, 16))    # 8x8 elements per tile
+composed = cute.make_layout((outer, inner))
+```
+
+#### Thread-Value (TV) Layouts
+
+Map threads to data elements:
+
+```python
+# Thread layout: 4 rows x 32 columns of threads
+thr_layout = cute.make_layout((4, 32), stride=(32, 1))
+
+# Value layout: each thread handles 4x4 elements
+val_layout = cute.make_layout((4, 4), stride=(4, 1))
+
+# Create TV layout
+tiler_mn, tv_layout = cute.make_layout_tv(thr_layout, val_layout)
+```
+
+### Tensors
+
+Tensors combine data pointers with layouts:
+
+```python
+# Create tensor from pointer and layout
+tensor = cute.make_tensor(ptr, layout)
+
+# From PyTorch/NumPy via DLPack
+from cutlass.cute.runtime import from_dlpack
+import torch
+
+torch_tensor = torch.randn(128, 128, device='cuda')
+cute_tensor = from_dlpack(torch_tensor)
+
+# Mark layout as dynamic for optimization
+cute_tensor = from_dlpack(torch_tensor).mark_layout_dynamic()
+```
+
+#### Tensor Operations
+
+```python
+# Indexing
+element = tensor[i, j]
+slice = tensor[:, j]
+
+# Size and shape
+total_size = cute.size(tensor)
+mode_size = cute.size(tensor, mode=[0])  # Size of mode 0
+shape = tensor.shape
+
+# Partitioning with zipped_divide
+tiled = cute.zipped_divide(tensor, tiler)
+# Returns: ((TileShape), (RestShape))
+```
+
+### Copy Operations
+
+#### Copy Atoms
+
+Define how data is copied:
+
+```python
+# Universal copy (works for gmem, smem, rmem)
+copy_atom = cute.make_copy_atom(
+    cute.nvgpu.CopyUniversalOp(),
+    element_type
+)
+
+# Async copy: global -> shared memory
+copy_atom = cute.make_copy_atom(
+    cute.nvgpu.cpasync.CopyG2SOp(),
+    element_type,
+    num_bits_per_copy=128  # 128-bit vectorized loads
+)
+
+# TMA (Tensor Memory Accelerator) - Hopper+
+copy_atom = cute.make_copy_atom(
+    cute.nvgpu.tma.CopyG2SOp(),
+    element_type
+)
+```
+
+#### Tiled Copy
+
+Distribute copy operations across threads:
+
+```python
+# Create tiled copy from TV layout
+tiled_copy = cute.make_tiled_copy_tv(
+    copy_atom, thr_layout, val_layout
+)
+
+# Get slice for current thread
+thr_copy = tiled_copy.get_slice(tidx)
+
+# Partition source and destination
+src = thr_copy.partition_S(source_tensor)  # Source
+dst = thr_copy.partition_D(dest_tensor)    # Destination
+
+# Perform copy
+cute.copy(copy_atom, src, dst)
+
+# Copy with predication (bounds checking)
+pred = cute.make_rmem_tensor(shape, cutlass.Boolean)
+# ... set predicate values ...
+cute.copy(copy_atom, src, dst, pred=pred)
+```
+
+### Fragments
+
+Register memory storage:
+
+```python
+# Allocate fragment matching tensor shape
+fragment = cute.make_fragment_like(tensor)
+
+# Manually allocate rmem tensor
+fragment = cute.make_rmem_tensor(shape, dtype)
+
+# Load/store data
+values = fragment.load()  # Load from registers
+fragment.store(values)    # Store to registers
+
+# Fill with value
+fragment.fill(0.0)
+```
+
+### MMA (Matrix Multiply-Accumulate)
+
+Utilize Tensor Cores for matrix multiplication:
+
+```python
+# Create MMA operation
+mma_op = cute.nvgpu.MmaUniversalOp(cutlass.Float16)  # FP16 MMA
+
+# Define atom layout (how atoms are arranged)
+atoms_layout = cute.make_layout(
+    (16, 16, 1),  # 16x16 threads, 1 in K dimension
+    stride=(16, 1, 0)
+)
+
+# Create tiled MMA
+tiled_mma = cute.make_tiled_mma(
+    mma_op,
+    atoms_layout,
+    permutation_mnk=(perm_m, perm_n, None)  # Optional permutations
+)
+
+# Get thread slice
+thr_mma = tiled_mma.get_slice(tidx)
+
+# Partition operands
+tA = thr_mma.partition_A(A_tensor)
+tB = thr_mma.partition_B(B_tensor)
+tC = thr_mma.partition_C(C_tensor)
+
+# Create fragments
+frgA = tiled_mma.make_fragment_A(tA)
+frgB = tiled_mma.make_fragment_B(tB)
+frgC = tiled_mma.make_fragment_C(tC)
+frgC.fill(0.0)
+
+# Perform MMA: C = A * B + C
+cute.gemm(tiled_mma, frgC, frgA, frgB, frgC)
+```
+
+### Shared Memory
+
+Allocate and manage shared memory:
+
+```python
+@cute.kernel
+def kernel_with_smem(...):
+    # Allocate shared memory
+    smem = cutlass.utils.SmemAllocator()
+    
+    # Allocate tensor in shared memory
+    sA = smem.allocate_tensor(
+        element_type,
+        layout,
+        alignment=16  # Bytes
+    )
+    
+    # Use shared memory tensor
+    # ...
+```
+
+### Synchronization
+
+```python
+# Block-level barrier
+cute.arch.syncthreads()
+
+# Async copy barriers
+cute.arch.cp_async_commit_group()  # Commit async copies
+cute.arch.cp_async_wait_group(n)   # Wait for n pending copies
+
+# Named barriers for producer-consumer patterns
+import cutlass.pipeline as pipeline
+
+barrier = pipeline.NamedBarrier(
+    barrier_id=1,
+    num_threads=num_threads
+)
+barrier.arrive_and_wait()
+```
+
+### Control Flow
+
+#### Compile-Time Ranges
+
+```python
+# Unroll loop at compile time
+for i in range(k_tiles, unroll_full=True):
+    # Loop body fully unrolled
+    process_tile(i)
+
+# Constexpr ranges
+for i in cutlass.range_constexpr(0, 10):
+    # i is known at compile time
+    pass
+```
+
+#### Dynamic Control Flow
+
+```python
+# Runtime conditionals
+if tidx == 0:
+    # Only thread 0 executes
+    pass
+
+# Constexpr conditionals (evaluated at compile time)
+if cutlass.const_expr(condition):
+    # Branch removed at compile time if false
+    pass
+```
+
+## Complete Example: Elementwise Operation
+
+```python
+import cutlass
+import cutlass.cute as cute
+import torch
+from cutlass.cute.runtime import from_dlpack
+import cutlass.cute.testing as testing
+
+@cute.kernel
+def elementwise_kernel(
+    gA: cute.Tensor,
+    gB: cute.Tensor,
+    gC: cute.Tensor,
+    cC: cute.Tensor,  # Coordinate tensor for predication
+    shape: cute.Shape,
+    thr_layout: cute.Layout,
+    val_layout: cute.Layout
+):
+    tidx, _, _ = cute.arch.thread_idx()
+    bidx, _, _ = cute.arch.block_idx()
+    
+    # Slice for this thread block
+    blk_coord = ((None, None), bidx)
+    blkA = gA[blk_coord]
+    blkB = gB[blk_coord]
+    blkC = gC[blk_coord]
+    blkCrd = cC[blk_coord]
+    
+    # Create copy operations
+    copy_atom_load = cute.make_copy_atom(
+        cute.nvgpu.CopyUniversalOp(), gA.element_type
+    )
+    copy_atom_store = cute.make_copy_atom(
+        cute.nvgpu.CopyUniversalOp(), gC.element_type
+    )
+    
+    # Create tiled copies
+    tiled_copy_A = cute.make_tiled_copy_tv(
+        copy_atom_load, thr_layout, val_layout
+    )
+    tiled_copy_B = cute.make_tiled_copy_tv(
+        copy_atom_load, thr_layout, val_layout
+    )
+    tiled_copy_C = cute.make_tiled_copy_tv(
+        copy_atom_store, thr_layout, val_layout
+    )
+    
+    # Get thread slices
+    thr_copy_A = tiled_copy_A.get_slice(tidx)
+    thr_copy_B = tiled_copy_B.get_slice(tidx)
+    thr_copy_C = tiled_copy_C.get_slice(tidx)
+    
+    # Partition tensors
+    thrA = thr_copy_A.partition_S(blkA)
+    thrB = thr_copy_B.partition_S(blkB)
+    thrC = thr_copy_C.partition_D(blkC)
+    
+    # Allocate register fragments
+    frgA = cute.make_fragment_like(thrA)
+    frgB = cute.make_fragment_like(thrB)
+    frgC = cute.make_fragment_like(thrC)
+    
+    # Setup predication for bounds checking
+    thrCrd = thr_copy_C.partition_S(blkCrd)
+    frgPred = cute.make_rmem_tensor(thrCrd.shape, cutlass.Boolean)
+    for i in range(0, cute.size(frgPred), 1):
+        val = cute.elem_less(thrCrd[i], shape)
+        frgPred[i] = val
+    
+    # Load from global memory
+    cute.copy(copy_atom_load, thrA, frgA, pred=frgPred)
+    cute.copy(copy_atom_load, thrB, frgB, pred=frgPred)
+    
+    # Compute: element-wise addition
+    result = frgA.load() + frgB.load()
+    frgC.store(result)
+    
+    # Store to global memory
+    cute.copy(copy_atom_store, frgC, thrC, pred=frgPred)
+
+@cute.jit
+def elementwise_add(mA, mB, mC):
+    # Define layouts
+    thr_layout = cute.make_ordered_layout((4, 32), order=(1, 0))
+    val_layout = cute.make_ordered_layout((4, 4), order=(1, 0))
+    tiler_mn, tv_layout = cute.make_layout_tv(thr_layout, val_layout)
+    
+    # Tile tensors
+    gA = cute.zipped_divide(mA, tiler_mn)
+    gB = cute.zipped_divide(mB, tiler_mn)
+    gC = cute.zipped_divide(mC, tiler_mn)
+    
+    # Create coordinate tensor for predication
+    idC = cute.make_identity_tensor(mC.shape)
+    cC = cute.zipped_divide(idC, tiler=tiler_mn)
+    
+    # Launch kernel
+    elementwise_kernel(gA, gB, gC, cC, mC.shape, thr_layout, val_layout).launch(
+        grid=[cute.size(gC, mode=[1]), 1, 1],
+        block=[cute.size(tv_layout, mode=[0]), 1, 1]
+    )
+
+# Usage
+M, N = 1024, 512
+A = torch.randn(M, N, dtype=torch.float32, device='cuda')
+B = torch.randn(M, N, dtype=torch.float32, device='cuda')
+C = torch.zeros(M, N, dtype=torch.float32, device='cuda')
+
+mA = from_dlpack(A).mark_layout_dynamic()
+mB = from_dlpack(B).mark_layout_dynamic()
+mC = from_dlpack(C).mark_layout_dynamic()
+
+# Compile with options
+compiled = cute.compile(
+    elementwise_add, mA, mB, mC,
+    options="--generate-line-info"
+)
+
+# Execute
+compiled(mA, mB, mC)
+
+# Verify
+torch.testing.assert_close(C, A + B)
+print("Success!")
+```
+
+## Advanced Features
+
+### Multi-Stage Pipelines
+
+Overlap memory transfers with computation:
+
+```python
+@cute.kernel
+def pipelined_kernel(mA, mB, mC, num_stages=3):
+    # Allocate multi-stage shared memory
+    sA_layout = cute.make_layout(
+        (tile_m, tile_k, num_stages),
+        stride=(1, tile_m, tile_m * tile_k)
+    )
+    smem = cutlass.utils.SmemAllocator()
+    sA = smem.allocate_tensor(mA.element_type, sA_layout)
+    
+    # Prefetch initial stages
+    for stage in range(num_stages - 1):
+        if stage < k_tiles:
+            cute.copy(tiled_copy, gA[..., stage], sA[..., stage])
+            cute.arch.cp_async_commit_group()
+    
+    # Main loop with pipelining
+    for k_tile in range(k_tiles):
+        # Wait for data to be ready
+        cute.arch.cp_async_wait_group(num_stages - 2)
+        cute.arch.syncthreads()
+        
+        # Compute on current stage
+        stage = k_tile % num_stages
+        cute.gemm(tiled_mma, acc, sA[..., stage], sB[..., stage], acc)
+        
+        # Prefetch next stage
+        if k_tile + num_stages - 1 < k_tiles:
+            next_stage = (k_tile + num_stages - 1) % num_stages
+            cute.copy(tiled_copy, gA[..., k_tile + num_stages - 1],
+                     sA[..., next_stage])
+            cute.arch.cp_async_commit_group()
+```
+
+### TMA (Tensor Memory Accelerator)
+
+Hopper+ feature for efficient bulk transfers:
+
+```python
+import cutlass.cute.nvgpu.tma as tma
+
+# Host-side: create TMA descriptor
+tma_desc = tma.create_tma_descriptor(
+    tensor_ptr,
+    tensor_shape,
+    tensor_stride,
+    box_shape,  # Size of data to transfer per TMA operation
+    element_type
+)
+
+@cute.kernel
+def tma_kernel(gmem_tensor, tma_desc):
+    smem = cutlass.utils.SmemAllocator()
+    smem_tensor = smem.allocate_tensor(...)
+    
+    # Use TMA to copy
+    if tidx == 0:  # TMA is single-threaded
+        tma.copy_g2s(tma_desc, gmem_tensor, smem_tensor)
+    cute.arch.syncthreads()
+    
+    # Use data in shared memory
+    # ...
+```
+
+### PyTorch Integration
+
+Seamless integration with PyTorch:
+
+```python
+import cutlass.torch as cutlass_torch
+
+# Convert data types
+torch_dtype = cutlass_torch.dtype(cutlass.Float16)
+
+# Get current CUDA stream
+stream = cutlass_torch.current_stream()
+
+# Pass stream to kernel
+@cute.jit
+def my_function(tensor, stream):
+    my_kernel(tensor).launch(
+        grid=[...],
+        block=[...],
+        stream=stream
+    )
+
+compiled = cute.compile(my_function, cute_tensor, stream)
+compiled(cute_tensor, stream)
+```
+
+### JAX Integration
+
+```python
+import cutlass.jax as cutlass_jax
+import jax.numpy as jnp
+
+# Wrap CuTe DSL function for JAX
+@cutlass_jax.jit_primitive
+def my_op(x, y):
+    # Returns compiled function and output shape
+    return compiled_fn, output_shape
+
+# Use in JAX
+x = jnp.ones((128, 128))
+y = jnp.ones((128, 128))
+result = my_op(x, y)
+```
+
+## Debugging
+
+### Print Statements
+
+```python
+@cute.kernel
+def debug_kernel(tensor: cute.Tensor):
+    tidx, _, _ = cute.arch.thread_idx()
+    
+    # Compile-time prints (during JIT)
+    print(f"[DSL INFO] Tensor type: {tensor.type}")
+    
+    # Runtime prints (during execution)
+    if tidx == 0:
+        cute.printf("Thread 0 executing")
+        cute.print_tensor(tensor)  # Print tensor contents
+```
+
+### Compile with Debug Info
+
+```python
+compiled = cute.compile[
+    cute.GenerateLineInfo,
+    cute.OptimizationLevel(0)  # Disable optimizations
+](
+    function, *args,
+    options="--generate-line-info -g -lineinfo"
+)
+```
+
+### Use NCU (NVIDIA Compute Profiler)
+
+```bash
+ncu --set full python your_script.py
+```
+
+## Performance Tips
+
+<AccordionGroup>
+  <Accordion title="Memory Coalescing">
+    Ensure contiguous threads access contiguous memory:
+    ```python
+    # Good: contiguous threads access contiguous elements
+    thr_layout = cute.make_layout((num_threads, 1), stride=(1, 0))
+    val_layout = cute.make_layout((1, vector_size), stride=(0, 1))
+    
+    # Bad: strided accesses
+    thr_layout = cute.make_layout((1, num_threads), stride=(0, 1))
+    ```
+  </Accordion>
+  
+  <Accordion title="Bank Conflicts">
+    Add padding to shared memory layouts:
+    ```python
+    # Without padding: potential bank conflicts
+    layout = cute.make_layout((128, 8), stride=(1, 128))
+    
+    # With padding: avoid bank conflicts
+    layout = cute.make_layout((128, 8), stride=(1, 132))  # +4 padding
+    ```
+  </Accordion>
+  
+  <Accordion title="Vectorization">
+    Use 128-bit loads/stores when possible:
+    ```python
+    # 128-bit vectorized copy (4x fp32)
+    copy_atom = cute.make_copy_atom(
+        cute.nvgpu.CopyUniversalOp(),
+        cutlass.Float32,
+        num_bits_per_copy=128
+    )
+    ```
+  </Accordion>
+  
+  <Accordion title="Occupancy">
+    Balance threads, registers, and shared memory:
+    ```python
+    # Check occupancy
+    print(f"Threads per block: {num_threads}")
+    print(f"Shared memory per block: {smem_bytes} bytes")
+    print(f"Registers per thread: ~{estimated_regs}")
+    
+    # Adjust tile sizes to maximize occupancy
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## API Summary
+
+### Decorators
+- `@cute.kernel` - Define GPU kernel
+- `@cute.jit` - Mark function for JIT compilation
+
+### Layout Functions
+- `cute.make_layout(shape, stride)` - Create layout
+- `cute.make_ordered_layout(shape, order)` - Create ordered layout
+- `cute.make_layout_tv(thr_layout, val_layout)` - Create TV layout
+
+### Tensor Functions
+- `cute.make_tensor(ptr, layout)` - Create tensor
+- `cute.make_fragment_like(tensor)` - Create fragment
+- `cute.make_rmem_tensor(shape, dtype)` - Allocate registers
+- `cute.make_identity_tensor(shape)` - Create coordinate tensor
+- `cute.zipped_divide(tensor, tiler)` - Tile tensor
+- `cute.local_tile(tensor, tiler, coord, proj)` - Local tile
+- `cute.size(tensor, mode)` - Get size
+
+### Copy Functions
+- `cute.make_copy_atom(op, dtype, ...)` - Create copy atom
+- `cute.make_tiled_copy_tv(atom, thr, val)` - Create tiled copy
+- `cute.copy(atom, src, dst, pred)` - Perform copy
+- `cute.autovec_copy(src, dst)` - Auto-vectorized copy
+
+### MMA Functions
+- `cute.nvgpu.MmaUniversalOp(dtype)` - Create MMA op
+- `cute.make_tiled_mma(op, layout, ...)` - Create tiled MMA
+- `cute.gemm(mma, c, a, b, c)` - Matrix multiply
+
+### Arch Functions
+- `cute.arch.thread_idx()` - Thread index
+- `cute.arch.block_idx()` - Block index
+- `cute.arch.block_dim()` - Block dimensions
+- `cute.arch.grid_dim()` - Grid dimensions
+- `cute.arch.syncthreads()` - Block barrier
+- `cute.arch.cp_async_commit_group()` - Commit async
+- `cute.arch.cp_async_wait_group(n)` - Wait async
+
+### Compilation
+- `cute.compile(fn, *args, **opts)` - Compile function
+- `cute.compile[options](fn, *args)` - Compile with options
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Examples" icon="flask" href="/python/examples">
+    Explore complete kernel examples
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/python/quickstart">
+    Quick introduction to CuTe DSL
+  </Card>
+  <Card title="PyTorch Integration" icon="link" href="/python/pytorch-integration">
+    Build PyTorch extensions
+  </Card>
+  <Card title="GitHub Examples">
+    [View source examples](https://github.com/NVIDIA/cutlass/tree/main/examples/python/CuTeDSL)
+  </Card>
+</CardGroup>

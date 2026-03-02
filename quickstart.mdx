@@ -1,0 +1,359 @@
+---
+title: Quick start
+description: Get up and running with CUTLASS in minutes
+---
+
+This guide will help you compile and run your first CUTLASS GEMM kernel in both C++ and Python.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- NVIDIA GPU with compute capability 7.0+ (Volta or newer)
+- CUDA Toolkit 11.4 or higher (12.8+ recommended)
+- C++17 compatible compiler (GCC 7.5+, Clang 7+, or MSVC)
+- CMake 3.19+ (for C++ examples)
+- Python 3.8+ (for Python interface)
+
+<Note>
+For best performance and latest features, use CUDA Toolkit 12.8 or higher with a Hopper (H100) or Blackwell (B200/RTX 50 series) GPU.
+</Note>
+
+## C++ quick start
+
+CUTLASS is a header-only library for C++, making it easy to integrate into your projects.
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/NVIDIA/cutlass.git
+    cd cutlass
+    export CUTLASS_PATH=$(pwd)
+    ```
+  </Step>
+
+  <Step title="Set up environment variables">
+    ```bash
+    export CUDACXX=${CUDA_INSTALL_PATH}/bin/nvcc
+    # Example: export CUDACXX=/usr/local/cuda/bin/nvcc
+    ```
+  </Step>
+
+  <Step title="Create a basic GEMM program">
+    Create a file named `my_gemm.cu`:
+
+    ```cpp my_gemm.cu
+    #include <iostream>
+    #include "cutlass/gemm/device/gemm.h"
+
+    int main() {
+      // Matrix dimensions: M x K * K x N = M x N
+      int M = 1024;
+      int N = 1024;
+      int K = 1024;
+
+      // Define the GEMM operation
+      using ColumnMajor = cutlass::layout::ColumnMajor;
+      using CutlassGemm = cutlass::gemm::device::Gemm<
+        float,        // Data type of A matrix
+        ColumnMajor,  // Layout of A matrix
+        float,        // Data type of B matrix
+        ColumnMajor,  // Layout of B matrix
+        float,        // Data type of C matrix
+        ColumnMajor   // Layout of C matrix
+      >;
+
+      // Allocate device memory
+      float *A, *B, *C;
+      size_t size_A = M * K * sizeof(float);
+      size_t size_B = K * N * sizeof(float);
+      size_t size_C = M * N * sizeof(float);
+      
+      cudaMalloc(&A, size_A);
+      cudaMalloc(&B, size_B);
+      cudaMalloc(&C, size_C);
+
+      // Initialize matrices (simplified - you'd fill with real data)
+      cudaMemset(A, 0, size_A);
+      cudaMemset(B, 0, size_B);
+      cudaMemset(C, 0, size_C);
+
+      // Set up GEMM arguments: D = alpha * A * B + beta * C
+      float alpha = 1.0f;
+      float beta = 0.0f;
+      
+      CutlassGemm gemm_op;
+      CutlassGemm::Arguments args(
+        {M, N, K},     // Problem dimensions
+        {A, K},        // Tensor-ref for A
+        {B, N},        // Tensor-ref for B
+        {C, N},        // Tensor-ref for C
+        {C, N},        // Tensor-ref for D (output)
+        {alpha, beta}  // Epilogue scalars
+      );
+
+      // Launch the GEMM kernel
+      cutlass::Status status = gemm_op(args);
+      
+      if (status != cutlass::Status::kSuccess) {
+        std::cerr << "CUTLASS GEMM kernel failed" << std::endl;
+        return -1;
+      }
+
+      // Wait for completion
+      cudaDeviceSynchronize();
+
+      std::cout << "GEMM completed successfully!" << std::endl;
+
+      // Cleanup
+      cudaFree(A);
+      cudaFree(B);
+      cudaFree(C);
+
+      return 0;
+    }
+    ```
+  </Step>
+
+  <Step title="Compile the program">
+    ```bash
+    nvcc -I${CUTLASS_PATH}/include \
+         -std=c++17 \
+         -gencode arch=compute_80,code=sm_80 \
+         my_gemm.cu -o my_gemm
+    ```
+
+    <Note>
+    Replace `compute_80,sm_80` with your GPU's compute capability:
+    - Ampere (A100): `compute_80,sm_80`
+    - Ada (RTX 40xx): `compute_89,sm_89`
+    - Hopper (H100): `compute_90a,sm_90a` (note the "a" suffix)
+    - Blackwell (B200): `compute_100a,sm_100a`
+    </Note>
+  </Step>
+
+  <Step title="Run the program">
+    ```bash
+    ./my_gemm
+    ```
+
+    You should see:
+    ```
+    GEMM completed successfully!
+    ```
+  </Step>
+</Steps>
+
+### Building with CMake
+
+For larger projects, use CMake:
+
+```cmake CMakeLists.txt
+cmake_minimum_required(VERSION 3.19)
+project(MyGEMM LANGUAGES CXX CUDA)
+
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CXX_STANDARD 17)
+
+find_package(CUDAToolkit REQUIRED)
+
+set(CUTLASS_PATH "path/to/cutlass" CACHE PATH "CUTLASS root directory")
+include_directories(${CUTLASS_PATH}/include)
+
+add_executable(my_gemm my_gemm.cu)
+set_target_properties(my_gemm PROPERTIES CUDA_ARCHITECTURES "80")
+```
+
+Build:
+```bash
+mkdir build && cd build
+cmake .. -DCUTLASS_PATH=${CUTLASS_PATH}
+make
+./my_gemm
+```
+
+## Python quick start
+
+The CUTLASS Python interface provides a high-level API for running CUTLASS kernels from Python.
+
+<Steps>
+  <Step title="Install the CUTLASS Python package">
+    ```bash
+    pip install nvidia-cutlass
+    ```
+
+    Or install from source:
+    ```bash
+    cd ${CUTLASS_PATH}
+    pip install .
+    ```
+  </Step>
+
+  <Step title="Create a Python GEMM script">
+    Create a file named `my_gemm.py`:
+
+    ```python my_gemm.py
+    import cutlass
+    import numpy as np
+
+    # Create a GEMM operation plan
+    # This will use FP16 (half precision) with row-major layout
+    plan = cutlass.op.Gemm(
+        element=np.float16,
+        layout=cutlass.LayoutType.RowMajor
+    )
+
+    # Create input matrices
+    M, N, K = 1024, 1024, 1024
+    
+    # Initialize with random values
+    A = np.random.randn(M, K).astype(np.float16)
+    B = np.random.randn(K, N).astype(np.float16)
+    C = np.zeros((M, N), dtype=np.float16)
+    D = np.zeros((M, N), dtype=np.float16)  # Output
+
+    # Run the GEMM: D = A @ B + C
+    plan.run(A, B, C, D)
+
+    print("GEMM completed successfully!")
+    print(f"Output shape: {D.shape}")
+    print(f"Output sample: {D[0, :5]}")
+
+    # Verify with NumPy
+    reference = A @ B + C
+    error = np.max(np.abs(D - reference))
+    print(f"Max error vs NumPy: {error}")
+    ```
+  </Step>
+
+  <Step title="Run the Python script">
+    ```bash
+    python my_gemm.py
+    ```
+
+    Expected output:
+    ```
+    GEMM completed successfully!
+    Output shape: (1024, 1024)
+    Output sample: [-12.5  8.25 -15.75 ...]
+    Max error vs NumPy: 0.0625
+    ```
+  </Step>
+</Steps>
+
+### Advanced Python example
+
+Here's a more advanced example with mixed precision and custom epilogue:
+
+```python
+import cutlass
+import numpy as np
+
+# FP16 inputs, FP32 accumulation
+plan = cutlass.op.Gemm(
+    element_A=np.float16,
+    element_B=np.float16,
+    element_C=np.float32,
+    element_D=np.float32,
+    element_accumulator=np.float32,
+    layout=cutlass.LayoutType.RowMajor
+)
+
+# Create matrices
+M, N, K = 2048, 2048, 2048
+A = np.random.randn(M, K).astype(np.float16)
+B = np.random.randn(K, N).astype(np.float16)
+C = np.random.randn(M, N).astype(np.float32)
+D = np.zeros((M, N), dtype=np.float32)
+
+# Run with custom alpha and beta: D = 2.0 * A @ B + 1.5 * C
+plan.run(A, B, C, D, alpha=2.0, beta=1.5)
+
+print(f"Completed mixed-precision GEMM: {M}x{N}x{K}")
+```
+
+## CuTe DSL quick start
+
+CuTe DSL allows you to write CUDA kernels directly in Python.
+
+<Steps>
+  <Step title="Set up CuTe DSL">
+    ```bash
+    cd ${CUTLASS_PATH}/python/CuTeDSL
+    ./setup.sh
+    ```
+  </Step>
+
+  <Step title="Write a simple kernel">
+    ```python
+    import cutlass.cute as cute
+    import numpy as np
+
+    # Define a simple elementwise addition kernel
+    @cute.kernel
+    def add_kernel(A, B, C):
+        # Get thread index
+        tid = cute.threadIdx.x + cute.blockIdx.x * cute.blockDim.x
+        
+        # Perform addition
+        if tid < A.size:
+            C[tid] = A[tid] + B[tid]
+
+    # Allocate and run
+    N = 1024
+    A = np.arange(N, dtype=np.float32)
+    B = np.arange(N, dtype=np.float32)
+    C = np.zeros(N, dtype=np.float32)
+
+    # Launch kernel
+    threads_per_block = 256
+    blocks = (N + threads_per_block - 1) // threads_per_block
+    add_kernel[blocks, threads_per_block](A, B, C)
+
+    print(f"Sum computed: {C[:5]}")
+    ```
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Installation guide" icon="download" href="/installation">
+    Detailed installation instructions for all platforms
+  </Card>
+  <Card title="C++ examples" icon="code" href="https://github.com/NVIDIA/cutlass/tree/main/examples">
+    Explore 100+ example kernels
+  </Card>
+  <Card title="Python examples" icon="python" href="https://github.com/NVIDIA/cutlass/tree/main/examples/python">
+    Jupyter notebooks with Python examples
+  </Card>
+  <Card title="Performance profiling" icon="gauge" href="https://docs.nvidia.com/cutlass/latest/media/docs/cpp/profiler.html">
+    Learn to profile and optimize kernels
+  </Card>
+</CardGroup>
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="CUDA out of memory errors">
+    Reduce matrix dimensions or batch size. CUTLASS kernels can be memory-intensive for large problems.
+  </Accordion>
+
+  <Accordion title="Compilation errors about C++ standard">
+    Ensure you're using C++17 or later:
+    ```bash
+    nvcc -std=c++17 ...
+    ```
+  </Accordion>
+
+  <Accordion title="Architecture mismatch errors">
+    Verify your GPU's compute capability matches the `-gencode` flags. For Hopper and Blackwell, use the "a" suffix (e.g., `sm_90a`).
+  </Accordion>
+
+  <Accordion title="Python import errors">
+    Ensure `cuda-python` version matches your CUDA toolkit version:
+    ```bash
+    pip install cuda-python==12.8.0  # Match your CUDA version
+    ```
+  </Accordion>
+</AccordionGroup>

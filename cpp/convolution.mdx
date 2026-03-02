@@ -1,0 +1,645 @@
+---
+title: 'Convolution Operations'
+description: 'CUTLASS convolution API for efficient 2D and 3D convolutions'
+---
+
+## Overview
+
+CUTLASS provides highly optimized convolution operations for 2D and 3D inputs using the implicit GEMM algorithm. This approach reformulates convolution as a matrix multiplication, leveraging CUTLASS's GEMM infrastructure for maximum performance.
+
+<Note>
+  Implicit GEMM convolution achieves similar performance to cuDNN while providing greater flexibility and customization through C++ templates.
+</Note>
+
+## Convolution Types
+
+CUTLASS supports three main convolution operations:
+
+<CardGroup cols={3}>
+
+<Card title="Fprop" icon="arrow-right">
+  Forward propagation
+  
+  `Output = Conv(Activation, Filter)`
+</Card>
+
+<Card title="Dgrad" icon="arrow-left">
+  Activation gradient (backprop)
+  
+  `dActivation = Conv(dOutput, Filter)`
+</Card>
+
+<Card title="Wgrad" icon="weight-hanging">
+  Filter gradient (weight update)
+  
+  `dFilter = Conv(Activation, dOutput)`
+</Card>
+
+</CardGroup>
+
+## cutlass::conv::device::ImplicitGemmConvolution
+
+The primary convolution device operator template.
+
+### Template Structure
+
+```cpp include/cutlass/conv/device/implicit_gemm_convolution.h:52
+template<typename ImplicitGemmKernel_>
+class ImplicitGemmConvolution {
+public:
+  using ElementA = typename UnderlyingKernel::ElementA;
+  using LayoutA = typename UnderlyingKernel::LayoutA;
+  using ElementB = typename UnderlyingKernel::ElementB;
+  using LayoutB = typename UnderlyingKernel::LayoutB;
+  using ElementC = typename UnderlyingKernel::ElementC;
+  using LayoutC = typename UnderlyingKernel::LayoutC;
+  using ElementAccumulator = typename UnderlyingKernel::ElementAccumulator;
+  
+  static cutlass::conv::Operator const kConvolutionalOperator;
+  static int const kConvDim;  // 2 for Conv2d, 3 for Conv3d
+};
+```
+
+### Key Type Aliases
+
+<ParamField path="ElementA" type="typename">
+  Element type for activation tensor (input feature maps)
+  
+  For Fprop: input activations
+  
+  For Dgrad: output gradients
+  
+  For Wgrad: output gradients
+</ParamField>
+
+<ParamField path="ElementB" type="typename">
+  Element type for filter tensor (kernel weights)
+  
+  For all modes: filter/kernel weights
+</ParamField>
+
+<ParamField path="ElementC" type="typename">
+  Element type for output tensor
+  
+  For Fprop: output activations
+  
+  For Dgrad: input gradients
+  
+  For Wgrad: filter gradients
+</ParamField>
+
+<ParamField path="kConvolutionalOperator" type="conv::Operator">
+  Convolution operation type:
+  - `conv::Operator::kFprop` - Forward propagation
+  - `conv::Operator::kDgrad` - Activation gradient
+  - `conv::Operator::kWgrad` - Filter gradient
+  - `conv::Operator::kDeconv` - Deconvolution (transposed convolution)
+</ParamField>
+
+### Problem Size (Conv2d)
+
+```cpp include/cutlass/conv/conv2d_problem_size.h
+struct Conv2dProblemSize {
+  int N;   // Batch size
+  int H;   // Input height
+  int W;   // Input width
+  int C;   // Input channels
+  int P;   // Output height
+  int Q;   // Output width  
+  int K;   // Output channels
+  int R;   // Filter height
+  int S;   // Filter width
+  
+  int pad_h;      // Padding height
+  int pad_w;      // Padding width
+  int stride_h;   // Stride height
+  int stride_w;   // Stride width
+  int dilation_h; // Dilation height
+  int dilation_w; // Dilation width
+  
+  conv::Mode mode;  // kCrossCorrelation or kConvolution
+  int split_k_slices;  // For split-K parallelization
+  int groups;          // For grouped convolution
+};
+```
+
+<ParamField path="N" type="int">
+  Batch size (number of images)
+</ParamField>
+
+<ParamField path="H, W" type="int">
+  Input spatial dimensions (Height × Width)
+</ParamField>
+
+<ParamField path="C" type="int">
+  Number of input channels
+</ParamField>
+
+<ParamField path="K" type="int">
+  Number of output channels (filters)
+</ParamField>
+
+<ParamField path="R, S" type="int">
+  Filter spatial dimensions (Height × Width)
+</ParamField>
+
+<ParamField path="P, Q" type="int">
+  Output spatial dimensions (Height × Width)
+  
+  Computed from input size, padding, stride, and dilation
+</ParamField>
+
+<ParamField path="pad_h, pad_w" type="int">
+  Padding applied to top/left (in Fprop)
+</ParamField>
+
+<ParamField path="stride_h, stride_w" type="int">
+  Convolution stride
+</ParamField>
+
+<ParamField path="dilation_h, dilation_w" type="int">
+  Filter dilation (atrous convolution)
+</ParamField>
+
+<ParamField path="groups" type="int" default="1">
+  Number of groups for grouped convolution
+  
+  When > 1, inputs and outputs are split into groups with independent convolutions
+</ParamField>
+
+## Tensor Layouts
+
+CUTLASS convolution supports multiple tensor layouts:
+
+### NHWC (TensorNHWC)
+
+```cpp
+// Activation: (N, H, W, C)
+cutlass::layout::TensorNHWC
+
+// Preferred for Tensor Core operations on Ampere+
+```
+
+**Layout**: Channels are the fastest-changing dimension (most contiguous in memory)
+
+### NCHW (TensorNCHW)  
+
+```cpp
+// Activation: (N, C, H, W)
+cutlass::layout::TensorNCHW
+
+// Traditional PyTorch/cuDNN layout
+```
+
+**Layout**: Spatial dimensions are contiguous
+
+### Filter Layouts
+
+```cpp
+// NHWC format: (K, R, S, C)
+cutlass::layout::TensorNHWC
+
+// NCHW format: (K, C, R, S)
+cutlass::layout::TensorNCHW
+```
+
+## Forward Propagation (Fprop) Example
+
+From `examples/16_ampere_tensorop_conv2dfprop/ampere_tensorop_conv2dfprop.cu`:
+
+<CodeGroup>
+
+```cpp Kernel Definition
+#include "cutlass/conv/kernel/default_conv2d_fprop.h"
+#include "cutlass/conv/device/implicit_gemm_convolution.h"
+
+using ElementAccumulator = float;
+using ElementComputeEpilogue = float;
+using ElementInputA = cutlass::half_t;
+using ElementInputB = cutlass::half_t;
+using ElementOutput = cutlass::half_t;
+
+using LayoutInputA = cutlass::layout::TensorNHWC;
+using LayoutInputB = cutlass::layout::TensorNHWC;
+using LayoutOutput = cutlass::layout::TensorNHWC;
+
+using Conv2dFpropKernel = typename cutlass::conv::kernel::DefaultConv2dFprop<
+  ElementInputA,
+  LayoutInputA,
+  ElementInputB,
+  LayoutInputB,
+  ElementOutput,
+  LayoutOutput,
+  ElementAccumulator,
+  cutlass::arch::OpClassTensorOp,
+  cutlass::arch::Sm80,
+  cutlass::gemm::GemmShape<128, 128, 64>,  // Threadblock tile
+  cutlass::gemm::GemmShape<64, 64, 64>,    // Warp tile
+  cutlass::gemm::GemmShape<16, 8, 16>,     // Instruction tile
+  cutlass::epilogue::thread::LinearCombination<
+    ElementOutput,
+    128 / cutlass::sizeof_bits<ElementOutput>::value,
+    ElementAccumulator,
+    ElementComputeEpilogue
+  >,
+  cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+  3,  // Stages
+  cutlass::arch::OpMultiplyAdd
+>::Kernel;
+
+using ImplicitGemm = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+```
+
+```cpp Problem Setup
+// Define convolution problem
+cutlass::conv::Conv2dProblemSize problem_size(
+  1,      // N - batch size
+  56,     // H - input height
+  56,     // W - input width  
+  64,     // C - input channels
+  128,    // K - output channels
+  3,      // R - filter height
+  3,      // S - filter width
+  56,     // P - output height
+  56,     // Q - output width
+  1,      // pad_h
+  1,      // pad_w
+  1,      // stride_h
+  1,      // stride_w
+  1,      // dilation_h
+  1       // dilation_w
+);
+```
+
+```cpp Kernel Launch
+ImplicitGemm conv_op;
+
+// Prepare arguments
+cutlass::TensorRef<ElementInputA, LayoutInputA> ref_A(activation_ptr, LayoutInputA::packed({N, H, W, C}));
+cutlass::TensorRef<ElementInputB, LayoutInputB> ref_B(filter_ptr, LayoutInputB::packed({K, R, S, C}));
+cutlass::TensorRef<ElementOutput, LayoutOutput> ref_C(output_ptr, LayoutOutput::packed({N, P, Q, K}));
+cutlass::TensorRef<ElementOutput, LayoutOutput> ref_D(output_ptr, LayoutOutput::packed({N, P, Q, K}));
+
+float alpha = 1.0f;
+float beta = 0.0f;
+
+ImplicitGemm::Arguments arguments{
+  problem_size,
+  ref_A,    // Activation
+  ref_B,    // Filter  
+  ref_C,    // Source (for beta scaling)
+  ref_D,    // Destination
+  {alpha, beta}  // Epilogue params
+};
+
+// Check feasibility
+cutlass::Status status = conv_op.can_implement(arguments);
+if (status != cutlass::Status::kSuccess) {
+  throw std::runtime_error("Convolution not supported");
+}
+
+// Launch
+status = conv_op(arguments);
+```
+
+</CodeGroup>
+
+## Activation Gradient (Dgrad) Example
+
+```cpp Dgrad Kernel
+using Conv2dDgradKernel = typename cutlass::conv::kernel::DefaultConv2dDgrad<
+  ElementInputA,       // dY (output gradient)
+  LayoutInputA,
+  ElementInputB,       // Filter (same as fprop)
+  LayoutInputB,
+  ElementOutput,       // dX (input gradient - output of dgrad)
+  LayoutOutput,
+  ElementAccumulator,
+  cutlass::arch::OpClassTensorOp,
+  cutlass::arch::Sm80,
+  cutlass::gemm::GemmShape<128, 128, 64>,
+  cutlass::gemm::GemmShape<64, 64, 64>,
+  cutlass::gemm::GemmShape<16, 8, 16>,
+  cutlass::epilogue::thread::LinearCombination<
+    ElementOutput,
+    128 / cutlass::sizeof_bits<ElementOutput>::value,
+    ElementAccumulator,
+    ElementComputeEpilogue
+  >,
+  cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+  3,
+  cutlass::arch::OpMultiplyAdd
+>::Kernel;
+
+using Conv2dDgrad = cutlass::conv::device::ImplicitGemmConvolution<Conv2dDgradKernel>;
+```
+
+## Filter Gradient (Wgrad) Example
+
+```cpp Wgrad Kernel
+using Conv2dWgradKernel = typename cutlass::conv::kernel::DefaultConv2dWgrad<
+  ElementInputA,       // dY (output gradient)
+  LayoutInputA,
+  ElementInputB,       // X (input activation)
+  LayoutInputB,
+  ElementOutput,       // dW (filter gradient - output of wgrad)
+  LayoutOutput,
+  ElementAccumulator,
+  cutlass::arch::OpClassTensorOp,
+  cutlass::arch::Sm80,
+  cutlass::gemm::GemmShape<128, 128, 64>,
+  cutlass::gemm::GemmShape<64, 64, 64>,
+  cutlass::gemm::GemmShape<16, 8, 16>,
+  cutlass::epilogue::thread::LinearCombination<
+    ElementOutput,
+    128 / cutlass::sizeof_bits<ElementOutput>::value,
+    ElementAccumulator,
+    ElementComputeEpilogue
+  >,
+  cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+  3,
+  cutlass::arch::OpMultiplyAdd
+>::Kernel;
+
+using Conv2dWgrad = cutlass::conv::device::ImplicitGemmConvolution<Conv2dWgradKernel>;
+```
+
+## Advanced Features
+
+### Grouped Convolution
+
+```cpp Grouped Convolution
+cutlass::conv::Conv2dProblemSize problem_size(
+  N, H, W, C,
+  K, R, S,
+  P, Q,
+  pad_h, pad_w,
+  stride_h, stride_w,
+  dilation_h, dilation_w,
+  cutlass::conv::Mode::kCrossCorrelation,
+  1,        // split_k_slices
+  4         // groups (4 independent convolutions)
+);
+
+// C and K must be divisible by groups
+// Each group processes C/groups input channels -> K/groups output channels
+```
+
+<Note>
+  Grouped convolution is commonly used in architectures like ResNeXt and MobileNet. CUTLASS supports both single-group and multi-group modes.
+</Note>
+
+### Depthwise Convolution
+
+Depthwise convolution is a special case where `groups = C = K`:
+
+```cpp Depthwise Separable
+// Depthwise: each input channel convolved independently
+int channels = 256;
+
+cutlass::conv::Conv2dProblemSize depthwise_problem(
+  N, H, W, channels,  // Input
+  channels,           // K = C for depthwise
+  3, 3,               // 3×3 filter
+  H, W,               // Same spatial size (padding=1, stride=1)
+  1, 1,               // Padding
+  1, 1,               // Stride
+  1, 1,               // Dilation
+  cutlass::conv::Mode::kCrossCorrelation,
+  1,                  // split_k
+  channels            // groups = C = K
+);
+```
+
+### Strided Convolution
+
+```cpp Strided Convolution
+// Downsampling with stride=2
+cutlass::conv::Conv2dProblemSize problem_size(
+  N, 56, 56, C,   // Input 56×56
+  K, 3, 3,        // 3×3 filter
+  28, 28,         // Output 28×28 (56/2)
+  1, 1,           // Padding
+  2, 2,           // stride_h=2, stride_w=2
+  1, 1            // Dilation
+);
+```
+
+### Dilated Convolution
+
+```cpp Atrous Convolution
+// Dilated convolution for larger receptive field
+cutlass::conv::Conv2dProblemSize problem_size(
+  N, H, W, C,
+  K, 3, 3,
+  P, Q,
+  2, 2,     // Padding (larger for dilation)
+  1, 1,     // Stride
+  2, 2      // dilation_h=2, dilation_w=2 (effective 5×5 filter)
+);
+```
+
+### Deconvolution (Transposed Convolution)
+
+```cpp Transposed Convolution
+using DeconvKernel = typename cutlass::conv::kernel::DefaultConv2dDeconv<
+  ElementInputA, LayoutInputA,
+  ElementInputB, LayoutInputB,
+  ElementOutput, LayoutOutput,
+  ElementAccumulator,
+  cutlass::arch::OpClassTensorOp,
+  cutlass::arch::Sm80,
+  ThreadblockShape,
+  WarpShape,
+  InstructionShape,
+  EpilogueOp,
+  ThreadblockSwizzle,
+  Stages,
+  MathOperator
+>::Kernel;
+
+using Deconv = cutlass::conv::device::ImplicitGemmConvolution<DeconvKernel>;
+
+// Upsampling: input 28×28 -> output 56×56 with stride=2
+```
+
+## 3D Convolution
+
+For volumetric data (e.g., video, medical imaging):
+
+```cpp Conv3d Problem Size
+struct Conv3dProblemSize {
+  int N;   // Batch
+  int D;   // Depth
+  int H;   // Height  
+  int W;   // Width
+  int C;   // Input channels
+  int Z;   // Output depth
+  int P;   // Output height
+  int Q;   // Output width
+  int K;   // Output channels
+  int T;   // Filter depth
+  int R;   // Filter height
+  int S;   // Filter width
+  
+  int pad_d, pad_h, pad_w;        // Padding
+  int stride_d, stride_h, stride_w;  // Stride
+  int dilation_d, dilation_h, dilation_w;  // Dilation
+};
+```
+
+## Memory Access Patterns
+
+### Iterator Algorithms
+
+CUTLASS uses different iterator algorithms for different layouts:
+
+<ParamField path="conv::IteratorAlgorithm::kAnalytic" type="enum">
+  Analytically computed predicates (slower, more flexible)
+</ParamField>
+
+<ParamField path="conv::IteratorAlgorithm::kOptimized" type="enum">
+  Optimized iterators with precomputed predicates (faster)
+</ParamField>
+
+<ParamField path="conv::IteratorAlgorithm::kFixedStrideDilation" type="enum">
+  Specialized for unit stride and dilation
+</ParamField>
+
+## Operator Verification
+
+```cpp Check Implementation
+ImplicitGemm conv_op;
+
+cutlass::Status status = ImplicitGemm::can_implement(arguments);
+
+if (status == cutlass::Status::kErrorInvalidProblem) {
+  // Problem size not supported (e.g., misaligned channels)
+}
+else if (status == cutlass::Status::kErrorNotSupported) {
+  // Feature combination not supported
+}
+else if (status == cutlass::Status::kSuccess) {
+  // Can proceed with kernel launch
+}
+```
+
+Common reasons for `can_implement` failure:
+
+- Output channels K not aligned to required boundary
+- Invalid group count (C or K not divisible by groups)
+- Unsupported stride/dilation combination
+- Tensor size exceeds 2^31 elements
+
+## Performance Tuning
+
+### Tile Size Selection
+
+<Note>
+  For NHWC layout on Ampere/Hopper, use larger threadblock tiles:
+  - `GemmShape<128, 128, 64>` or `GemmShape<128, 256, 64>`
+  
+  For NCHW layout or older architectures:
+  - `GemmShape<128, 128, 32>` or `GemmShape<64, 64, 32>`
+</Note>
+
+### Pipeline Stages
+
+```cpp
+// More stages overlap data movement with compute
+int Stages = 3;  // Ampere/Hopper with async copy
+int Stages = 2;  // Turing and earlier
+```
+
+### Split-K for Small Batches
+
+```cpp Split-K Convolution
+// When N is small, parallelize across K dimension
+cutlass::conv::Conv2dProblemSize problem_size(
+  1,      // Small batch
+  224, 224, 3,
+  64, 7, 7,
+  112, 112,
+  3, 3, 2, 2, 1, 1,
+  cutlass::conv::Mode::kCrossCorrelation,
+  4       // split_k_slices=4 for better parallelism
+);
+```
+
+## Example Applications
+
+<CardGroup cols={2}>
+
+<Card title="Image Classification" icon="image">
+  ResNet, VGG, EfficientNet convolution layers
+</Card>
+
+<Card title="Object Detection" icon="camera-viewfinder">
+  YOLO, Faster R-CNN feature extractors
+</Card>
+
+<Card title="Semantic Segmentation" icon="brush">
+  U-Net, DeepLab upsampling and downsampling
+</Card>
+
+<Card title="Video Processing" icon="video">
+  3D convolutions for action recognition
+</Card>
+
+</CardGroup>
+
+## Related Operations
+
+<CardGroup cols={2}>
+
+<Card title="Convolution Bias" icon="plus">
+  Add bias and activation in epilogue for fused operations
+</Card>
+
+<Card title="Batch Normalization" icon="layer-group">
+  Can be fused into convolution epilogue
+</Card>
+
+<Card title="Residual Connections" icon="arrows-split-up-and-left">
+  Use epilogue to add skip connections
+</Card>
+
+<Card title="Gather/Scatter Conv" icon="table-cells">
+  Sparse or irregular convolution patterns
+</Card>
+
+</CardGroup>
+
+## Comparison with cuDNN
+
+| Feature | CUTLASS | cuDNN |
+|---------|---------|-------|
+| **Performance** | Comparable (often within 5%) | Highly optimized |
+| **Flexibility** | Full template customization | Limited to API |
+| **Epilogue Fusion** | Arbitrary C++ functors | Limited built-ins |
+| **Batched Ops** | Yes, with custom layouts | Yes |
+| **Grouped Conv** | Yes, single/multi-group | Yes |
+| **Mixed Precision** | Any combination | Predefined types |
+| **Code Generation** | Template instantiation | Precompiled library |
+
+## See Also
+
+<CardGroup cols={2}>
+
+<Card title="GEMM API" icon="calculator" href="/cpp/gemm-api">
+  Convolution builds on GEMM infrastructure
+</Card>
+
+<Card title="Epilogue Operations" icon="wand-magic-sparkles" href="/cpp/epilogue">
+  Fuse activations and bias into convolution
+</Card>
+
+<Card title="Conv Examples" icon="folder">
+  See `examples/09_turing_tensorop_conv2dfprop/` and related examples
+</Card>
+
+<Card title="Performance Guide" icon="gauge-high" href="/performance">
+  Optimize convolution kernels for your workload
+</Card>
+
+</CardGroup>

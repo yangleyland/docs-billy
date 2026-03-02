@@ -1,0 +1,479 @@
+---
+title: 'Profiling with CUTLASS Profiler'
+description: 'Use the CUTLASS profiler to measure and analyze kernel performance'
+---
+
+The CUTLASS Profiler is a command-line driven test and profiling environment for CUTLASS computations defined in the CUTLASS Instance Library. It can execute and profile GEMM, Sparse GEMM, Conv2d, and Conv3d kernels with comprehensive performance metrics.
+
+## Building the Profiler
+
+The CUTLASS Profiler can be compiled from the CUTLASS build directory:
+
+```bash
+$ make cutlass_profiler -j
+```
+
+<Note>
+By default, only one tile size (typically 128x128) is instantiated for each data type, math instruction, and layout to reduce compilation time.
+</Note>
+
+### Building All Kernels
+
+To instantiate all available kernels (warning: this results in tens of thousands of kernels and very long build times):
+
+```bash
+$ cmake .. -DCUTLASS_NVCC_ARCHS=90a -DCUTLASS_LIBRARY_KERNELS=all
+$ make cutlass_profiler -j16
+```
+
+### Building a Subset of Kernels
+
+For practical use, compile only the kernels you need using wildcard patterns:
+
+<CodeGroup>
+
+```bash Tensor Core GEMM (FP16)
+$ cmake .. -DCUTLASS_NVCC_ARCHS='75;80' \
+  -DCUTLASS_LIBRARY_KERNELS=cutlass_tensorop_s*gemm_f16_*_nt_align8
+$ make cutlass_profiler -j16
+```
+
+```bash Single CUDA Core GEMM
+$ cmake .. -DCUTLASS_NVCC_ARCHS='75;80' \
+  -DCUTLASS_LIBRARY_KERNELS=cutlass_simt_sgemm_128x128_8x2_nn_align1
+$ make cutlass_profiler -j16
+```
+
+```bash Convolution Kernels
+$ cmake .. -DCUTLASS_NVCC_ARCHS='75;80' \
+  -DCUTLASS_LIBRARY_KERNELS=cutlass_tensorop_s*fprop_optimized_f16
+$ make cutlass_profiler -j16
+```
+
+</CodeGroup>
+
+## Basic Usage
+
+View the help message to see all available options:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --help
+```
+
+### Profiling Modes
+
+The profiler supports several execution modes:
+
+- `--mode=profile` - Regular verification and profiling (default)
+- `--mode=dry_run` - No kernels are launched or workspaces allocated
+- `--mode=enumerate` - Lists all operation kinds and operations
+- `--mode=trace` - Executes a single device-side computation with no other kernel launches
+
+### Getting Device Information
+
+```bash
+$ ./tools/profiler/cutlass_profiler --device-info
+```
+
+## Profiling GEMM Operations
+
+### Basic GEMM Profiling
+
+Profile a single problem size:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --m=1024 --n=1024 --k=128
+```
+
+### Example Output
+
+```
+=============================
+  Problem ID: 1
+
+        Provider: CUTLASS
+   OperationKind: gemm
+       Operation: cutlass_simt_sgemm_128x128_8x2_nn_align1
+
+          Status: Success
+    Verification: ON
+     Disposition: Passed
+
+          cuBLAS: Passed
+
+       Arguments: --m=3456 --n=4096 --k=4096 --A=f32:column --B=f32:column \
+                  --C=f32:column --alpha=1 --beta=0 --split_k_slices=1 \
+                  --batch_count=1 --op_class=simt --accum=f32 \
+                  --cta_m=128 --cta_n=128 --cta_k=8 --stages=2
+
+           Bytes: 180355072  bytes
+           FLOPs: 115992428544  flops
+
+         Runtime: 6.73655  ms
+          Memory: 24.934 GiB/s
+
+            Math: 17218.4 GFLOP/s
+
+=============================
+```
+
+### Sweeping Problem Sizes
+
+Use ranges to sweep over problem dimensions:
+
+```bash
+# Sweep K dimension from 8 to 4096 in increments of 8
+$ ./tools/profiler/cutlass_profiler \
+  --kernels=cutlass_simt_sgemm_128x128_nn \
+  --m=4352 --n=4096 --k=8:4096:8
+
+# Sweep multiple dimensions with comma-delimited values
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --m=1024:4096:256 --n=1024:4096:256 --k=128:8192:128 \
+  --beta=0,1,2.5
+```
+
+### Tensor Core Operations
+
+Profile kernels using Tensor Cores:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --op_class=tensorop \
+  --m=3456 --n=4096 --k=8192
+```
+
+**Example output:**
+
+```
+Operation: cutlass_tensorop_s16816gemm_f16_256x128_32x3_nn_align8
+
+       Arguments: --m=3456 --n=4096 --k=8192 --A=f16:column --B=f16:column \
+                  --C=f32:column --op_class=tensorop --accum=f32 \
+                  --cta_m=256 --cta_n=128 --cta_k=32 --stages=3 \
+                  --inst_m=16 --inst_n=8 --inst_k=16
+
+           Bytes: 180355072  bytes
+           FLOPs: 231956545536  flops
+
+         Runtime: 0.98647  ms
+          Memory: 170.272 GiB/s
+            Math: 235138 GFLOP/s
+```
+
+## Advanced Profiling Options
+
+### Filtering Kernels
+
+Use wildcard patterns to filter which kernels to profile:
+
+```bash
+# Profile kernels matching pattern
+$ ./tools/profiler/cutlass_profiler \
+  --kernels="s1688*nt, s884*tn*align8" \
+  --m=3456 --n=4096 --k=4096
+
+# Exclude specific kernels
+$ ./tools/profiler/cutlass_profiler \
+  --kernels=sgemm --ignore-kernels="*splitk*"
+```
+
+### Controlling Profiling Duration
+
+<CodeGroup>
+
+```bash Fixed Iterations
+# Profile with exactly 100 iterations
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --m=2048 --n=2048 --k=2048 \
+  --profiling-iterations=100
+```
+
+```bash Time-Based
+# Profile for 500ms with minimum 10 iterations
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --m=2048 --n=2048 --k=2048 \
+  --profiling-duration=500 \
+  --min-iterations=10
+```
+
+```bash Warmup
+# Use 20 warmup iterations before profiling
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --m=2048 --n=2048 --k=2048 \
+  --warmup-iterations=20
+```
+
+</CodeGroup>
+
+### Data Distribution
+
+Control how input tensors are initialized:
+
+```bash
+# Uniform distribution
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --dist=uniform,min:0,max:3 --m=1024 --n=1024 --k=128
+
+# Gaussian distribution
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --dist=gaussian,mean:0,stddev:3 --m=1024 --n=1024 --k=128
+
+# Sequential distribution
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --dist=sequential,start:0,delta:1 --m=1024 --n=1024 --k=128
+```
+
+### Verification Options
+
+```bash
+# Disable verification for faster profiling
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --verification-enabled=false --m=4096 --n=4096 --k=4096
+
+# Save workspace when results are incorrect
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --save-workspace=incorrect --m=1024 --n=1024 --k=1024
+
+# Set error tolerance
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --epsilon=0.01 --nonzero-floor=1e-8
+```
+
+## Output and Reporting
+
+### CSV Output
+
+Save profiling results to a CSV file:
+
+```bash
+$ ./tools/profiler/cutlass_profiler \
+  --kernels=cutlass_simt_sgemm_128x128_nn \
+  --m=3456 --n=4096 --k=8:4096:8 \
+  --output=report.csv
+```
+
+### Adding Tags for Analysis
+
+Prepend custom columns for easier pivot table generation:
+
+```bash
+$ ./tools/profiler/cutlass_profiler \
+  --kernels=sgemm --m=3456 --n=4096 --k=8:4096:8 \
+  --output=report.csv \
+  --tags=cutlass:4.4,date:2026-03-01,config:baseline
+```
+
+### JUnit XML Output
+
+Generate JUnit-compatible XML reports:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --junit-output=results --m=1024 --n=1024 --k=1024
+```
+
+## Performance Optimization Features
+
+### Exhaustive Kernel Search
+
+Find the best performing kernel for your problem:
+
+<Steps>
+
+<Step title="Search across all parameters">
+  Enable exhaustive search to find the optimal kernel configuration:
+  ```bash
+  $ ./tools/profiler/cutlass_profiler \
+    --kernels=*gemm* \
+    --enable-kernel-performance-search \
+    --sort-results-flops-per-sec
+  ```
+</Step>
+
+<Step title="Optimize for fixed problem size">
+  Tune kernel parameters for a specific GEMM shape:
+  ```bash
+  $ ./tools/profiler/cutlass_profiler \
+    --kernels=*gemm* \
+    --enable-best-kernel-for-fixed-shape \
+    --m=6144 --n=6144 --k=6144 \
+    --sort-results-flops-per-sec
+  ```
+</Step>
+
+<Step title="Sweep multiple shapes">
+  Test multiple problem sizes:
+  ```bash
+  $ ./tools/profiler/cutlass_profiler \
+    --kernels=*gemm* \
+    --enable-best-kernel-for-fixed-shape \
+    --m=1024,2048,4096 --n=1024,2048,4096 --k=1024,2048,4096 \
+    --sort-results-flops-per-sec
+  ```
+</Step>
+
+</Steps>
+
+### CUDA Graphs
+
+Reduce kernel launch overhead by using CUDA graphs:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --use-cuda-graphs=true --m=1024 --n=1024 --k=1024
+```
+
+### Cluster Configuration (Hopper/Blackwell)
+
+Control cluster shapes on modern architectures:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --cluster_m=2 --cluster_n=1 --cluster_k=1 \
+  --m=2048 --n=2048 --k=2048
+```
+
+## Profiling Convolutions
+
+### Conv2d Forward Propagation
+
+```bash
+$ ./tools/profiler/cutlass_profiler --operation=Conv2d \
+  --Activation=f16:nhwc --Filter=f16:nhwc --Output=f16 \
+  --n=8 --h=224 --w=224 --c=128 --k=128 --r=3 --s=3 \
+  --pad_h=1 --pad_w=1 --stride_h=1 --stride_w=1
+```
+
+**Example output:**
+
+```
+Operation: cutlass_tensorop_s16816fprop_optimized_f16_128x128_32x5_nhwc
+
+           Bytes: 1130659840  bytes
+           FLOPs: 118482796544  flops
+
+         Runtime: 0.711496  ms
+          Memory: 1479.99 GiB/s
+            Math: 166526 GFLOP/s
+```
+
+## Hopper-Specific Features
+
+### Instantiation Levels
+
+Control the number of kernel variants generated:
+
+```bash
+$ cmake .. \
+  -DCUTLASS_NVCC_ARCHS="90a" \
+  -DCUTLASS_LIBRARY_KERNELS="cutlass3x_sm90_tensorop_gemm_f16_f16_f32_void_f32_*" \
+  -DCUTLASS_LIBRARY_INSTANTIATION_LEVEL="500" \
+  -DCUTLASS_UNITY_BUILD_ENABLED=ON
+```
+
+The instantiation level is a 4-digit number controlling:
+- Digit 0: Instruction Shape
+- Digit 1: MMA Shape Multiplier
+- Digit 2: Cluster Shape
+- Digit 3: Schedule Pruning
+
+### Mixed Input Data Types
+
+Profile mixed precision kernels:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --A=e4m3:column --B=f16:row \
+  --runtime_input_datatype_a=e4m3 \
+  --runtime_input_datatype_b=f16 \
+  --m=2048 --n=2048 --k=2048
+```
+
+## Performance Analysis Tips
+
+<AccordionGroup>
+
+<Accordion title="Understanding GFLOP/s Results">
+The "Math" metric shows computational throughput in GFLOP/s. Compare this against the theoretical peak of your GPU:
+
+- NVIDIA H100: ~989 TFLOPS (FP16 Tensor Core)
+- NVIDIA A100: ~312 TFLOPS (FP16 Tensor Core)
+- NVIDIA V100: ~125 TFLOPS (FP16 Tensor Core)
+
+Efficiency = (Measured GFLOP/s) / (Theoretical Peak) × 100%
+</Accordion>
+
+<Accordion title="Memory vs. Compute Bound">
+Compare the "Memory" and "Math" metrics:
+
+- If memory bandwidth is saturated but GFLOP/s is low, the kernel is **memory-bound**
+- If GFLOP/s is high but memory bandwidth has headroom, the kernel is **compute-bound**
+
+Optimal kernels on modern GPUs should be compute-bound for large problem sizes.
+</Accordion>
+
+<Accordion title="Tile Size Selection">
+Tile sizes affect both performance and resource usage:
+
+- Larger tiles (256×256) are better for large matrices
+- Smaller tiles (64×64 or 128×128) may be better for smaller problems
+- Use `--cta_m`, `--cta_n`, `--cta_k` to override tile sizes
+</Accordion>
+
+</AccordionGroup>
+
+## Common Profiling Workflows
+
+### Functional Testing
+
+Quick functional test across various problem sizes:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --m=8,56,120,136,256,264,512,520,1024,1032,4096,8192,16384 \
+  --n=8,56,120,136,256,264,512,520,1024,1032,4096,8192,16384 \
+  --k=8,16,32,64,128,256,288,384,504,512,520 \
+  --beta=0,1,2 --profiling-iterations=1 \
+  --providers=cutlass --output=functional-test.csv
+```
+
+### Performance Comparison
+
+Compare CUTLASS against cuBLAS:
+
+```bash
+$ ./tools/profiler/cutlass_profiler --operation=Gemm \
+  --verification-providers=cublas \
+  --m=2048 --n=2048 --k=2048 \
+  --providers=cutlass,cublas
+```
+
+### Batch Processing with Kernel Lists
+
+Profile specific kernels from a file:
+
+```bash
+# Create file with kernel names
+$ echo "cutlass_tensorop_s16816gemm_f16_256x128_32x3_nn_align8" > kernels.txt
+$ echo "cutlass_tensorop_s16816gemm_f16_128x256_32x3_nn_align8" >> kernels.txt
+
+# Profile kernels from file
+$ ./tools/profiler/cutlass_profiler \
+  --kernels-file=kernels.txt \
+  --m=4096 --n=4096 --k=4096
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Optimization Techniques" icon="gauge-high" href="/performance/optimization">
+  Learn strategies to optimize CUTLASS kernels for your workload
+</Card>
+
+<Card title="Benchmarks" icon="chart-line" href="/performance/benchmarks">
+  View performance benchmarks across different architectures
+</Card>
+
+</CardGroup>

@@ -1,0 +1,399 @@
+---
+title: cute::Layout
+description: CuTe Layout type for mapping logical coordinates to linear indices
+---
+
+## Overview
+
+`cute::Layout` is the fundamental abstraction in CuTe for describing the mapping between logical multi-dimensional coordinates and linear memory offsets. A Layout is defined by a Shape (extents in each dimension) and a Stride (steps between adjacent elements in each dimension).
+
+## Class Template
+
+```cpp
+template <class Shape, class Stride = LayoutLeft::Apply<Shape>>
+struct Layout : private cute::tuple<Shape, Stride>
+{
+  static constexpr int rank = rank_v<Shape>;
+  
+  CUTE_HOST_DEVICE constexpr
+  Layout(Shape const& shape = {}, Stride const& stride = {});
+};
+```
+
+### Template Parameters
+
+<ParamField path="Shape" type="IntTuple">
+  The shape of the layout, specifying the extent in each mode. Can be a single integer or a hierarchical tuple of integers.
+</ParamField>
+
+<ParamField path="Stride" type="IntTuple" default="LayoutLeft::Apply<Shape>">
+  The stride of the layout, specifying the step size in each mode. Defaults to column-major (LayoutLeft) ordering.
+</ParamField>
+
+## Source Location
+
+`include/cute/layout.hpp:98-311`
+
+## Member Functions
+
+### Accessors
+
+#### shape()
+
+```cpp
+template <int... I>
+CUTE_HOST_DEVICE constexpr decltype(auto)
+shape() const;
+```
+
+Returns the shape of the layout or a specific mode.
+
+**Example:**
+```cpp
+auto layout = make_layout(make_shape(16, 32), make_stride(1, 16));
+auto s = layout.shape();      // Returns (16, 32)
+auto s0 = layout.shape<0>();  // Returns 16
+```
+
+#### stride()
+
+```cpp
+template <int... I>
+CUTE_HOST_DEVICE constexpr decltype(auto)
+stride() const;
+```
+
+Returns the stride of the layout or a specific mode.
+
+**Example:**
+```cpp
+auto layout = make_layout(make_shape(16, 32), make_stride(1, 16));
+auto d = layout.stride();      // Returns (1, 16)
+auto d0 = layout.stride<0>();  // Returns 1
+```
+
+### Mapping Operations
+
+#### operator()
+
+```cpp
+template <class Coord>
+CUTE_HOST_DEVICE constexpr auto
+operator()(Coord const& coord) const;
+```
+
+Maps a logical coordinate to a linear index, or slices the layout if the coordinate contains `_` (underscore).
+
+**Parameters:**
+- `coord`: Logical coordinate (single integer or tuple)
+
+**Returns:** Linear index (integer) or sliced layout
+
+**Example:**
+```cpp
+auto layout = make_layout(make_shape(4, 8), make_stride(1, 4));
+int idx = layout(make_coord(2, 3));  // Returns 2 + 3*4 = 14
+auto sub = layout(make_coord(_, 3)); // Returns sliced layout
+```
+
+### Composition
+
+#### compose()
+
+```cpp
+template <class OtherLayout>
+CUTE_HOST_DEVICE constexpr auto
+compose(OtherLayout const& other) const;
+```
+
+Composes this layout with another layout: `result(c) = this(other(c))`.
+
+**Example:**
+```cpp
+auto outer = make_layout(make_shape(64));
+auto inner = make_layout(make_shape(8, 8));
+auto composed = outer.compose(inner);
+```
+
+#### with_shape()
+
+```cpp
+template <class OtherShape>
+CUTE_HOST_DEVICE constexpr auto
+with_shape(OtherShape const& shape) const;
+```
+
+Composes this layout with a layout having the given shape.
+
+### Tiling
+
+#### tile()
+
+```cpp
+template <class OtherLayout>
+CUTE_HOST_DEVICE constexpr auto
+tile(OtherLayout const& other) const;
+```
+
+Tiles this layout by dividing it into blocks defined by the other layout.
+
+**Example:**
+```cpp
+auto layout = make_layout(make_shape(64, 64));
+auto tiled = layout.tile(make_shape(16, 16));
+// Result has shape ((16,16), (4,4))
+```
+
+### Coordinate Conversion
+
+#### get_hier_coord()
+
+```cpp
+template <class IInt>
+CUTE_HOST_DEVICE constexpr auto
+get_hier_coord(IInt const& idx) const;
+```
+
+Converts a linear index to hierarchical logical coordinates.
+
+**Returns:** Coordinate with the same hierarchical structure as the shape
+
+#### get_flat_coord()
+
+```cpp
+template <class IInt>
+CUTE_HOST_DEVICE constexpr auto
+get_flat_coord(IInt const& idx) const;
+```
+
+Converts a linear index to flat logical coordinates.
+
+**Returns:** Flat rank-N coordinate tuple
+
+#### get_1d_coord()
+
+```cpp
+template <class IInt>
+CUTE_HOST_DEVICE constexpr auto
+get_1d_coord(IInt const& idx) const;
+```
+
+Converts a linear index to a generalized column-major 1D coordinate.
+
+**Returns:** Single integer coordinate
+
+## Factory Functions
+
+### make_layout()
+
+```cpp
+template <class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+make_layout(Shape const& shape, Stride const& stride);
+
+template <class Shape>
+CUTE_HOST_DEVICE constexpr auto
+make_layout(Shape const& shape);
+```
+
+Creates a Layout with the specified shape and stride. If stride is omitted, defaults to LayoutLeft (column-major).
+
+**Example:**
+```cpp
+// Explicit shape and stride
+auto layout1 = make_layout(make_shape(16, 32), 
+                           make_stride(1, 16));
+
+// Column-major default
+auto layout2 = make_layout(make_shape(16, 32));
+// Equivalent to: make_stride(1, 16)
+
+// Row-major
+auto layout3 = make_layout(make_shape(16, 32), LayoutRight{});
+```
+
+### make_identity_layout()
+
+```cpp
+template <class Shape>
+CUTE_HOST_DEVICE constexpr auto
+make_identity_layout(Shape const& shape);
+```
+
+Creates an identity layout where `layout(i) = i`.
+
+### make_layout_like()
+
+```cpp
+template <class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+make_layout_like(Layout<Shape,Stride> const& layout);
+```
+
+Creates a compact layout with the same shape and stride ordering as the input layout.
+
+## Utility Functions
+
+### size()
+
+```cpp
+template <int... Is, class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+size(Layout<Shape,Stride> const& layout);
+```
+
+Returns the number of elements in the layout or a specific mode.
+
+### rank()
+
+```cpp
+template <class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+rank(Layout<Shape,Stride> const& layout);
+```
+
+Returns the number of modes (dimensions) in the layout.
+
+### depth()
+
+```cpp
+template <class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+depth(Layout<Shape,Stride> const& layout);
+```
+
+Returns the hierarchical depth of the layout.
+
+### cosize()
+
+```cpp
+template <int... Is, class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+cosize(Layout<Shape,Stride> const& layout);
+```
+
+Returns the codomain size (maximum value + 1 that the layout can produce).
+
+### coalesce()
+
+```cpp
+template <class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+coalesce(Layout<Shape,Stride> const& layout);
+```
+
+Simplifies the layout by combining adjacent modes that can be merged.
+
+**Example:**
+```cpp
+auto layout = make_layout(make_shape(make_shape(4, 8), 2),
+                          make_stride(make_stride(1, 4), 32));
+auto simplified = coalesce(layout);
+// Result: shape (32, 2), stride (1, 32)
+```
+
+### filter()
+
+```cpp
+template <class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+filter(Layout<Shape,Stride> const& layout);
+```
+
+Removes all stride-0 modes and size-1 modes from the layout.
+
+### complement()
+
+```cpp
+template <class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+complement(Layout<Shape,Stride> const& layout);
+```
+
+Builds the complement layout that points to elements not covered by the input layout.
+
+### right_inverse()
+
+```cpp
+template <class Shape, class Stride>
+CUTE_HOST_DEVICE constexpr auto
+right_inverse(Layout<Shape,Stride> const& layout);
+```
+
+Builds the right-inverse layout such that `layout(result(i)) == i`.
+
+## Common Layout Types
+
+### LayoutLeft
+Column-major (Fortran-style) layout where the first mode has stride-1.
+
+### LayoutRight
+Row-major (C-style) layout where the last mode has stride-1.
+
+## Usage Examples
+
+### Basic Layout Creation
+
+```cpp
+#include <cute/layout.hpp>
+
+using namespace cute;
+
+// Column-major 16x32 layout
+auto layout = make_layout(make_shape(16, 32));
+
+// Access elements
+int idx = layout(5, 10);  // Returns 5 + 10*16 = 165
+
+// Query properties
+int total_size = size(layout);        // 512
+int rows = size<0>(layout);           // 16
+int cols = size<1>(layout);           // 32
+```
+
+### Hierarchical Layouts
+
+```cpp
+// Create a 2-level hierarchical layout
+auto shape = make_shape(make_shape(4, 8), make_shape(2, 4));
+auto layout = make_layout(shape);
+
+// Layout has shape ((4,8),(2,4)) representing a 32x8 matrix
+// organized as 2x4 tiles of 4x8 blocks
+```
+
+### Slicing and Tiling
+
+```cpp
+// Create a layout
+auto layout = make_layout(make_shape(64, 64));
+
+// Slice to get a sub-layout
+auto col_slice = layout(_, 10);  // Get column 10
+
+// Tile into 8x8 blocks
+auto tiled = layout.tile(make_shape(8, 8));
+// Shape: ((8,8), (8,8))
+```
+
+### Working with Strides
+
+```cpp
+// Row-major layout
+auto row_major = make_layout(make_shape(16, 32), 
+                             make_stride(32, 1));
+
+// Strided layout (every other element)
+auto strided = make_layout(make_shape(8, 16),
+                           make_stride(2, 32));
+
+// Swizzled layout for bank conflict avoidance
+auto swizzled = make_layout(make_shape(32, 32),
+                            make_stride(1, 33));
+```
+
+## See Also
+
+- [cute::Tensor](/api/cute/tensor) - Tensor type that combines Layout with data
+- [cute::TiledMma](/api/cute/tiled-mma) - Tiled matrix multiply operations
+- [cute::TiledCopy](/api/cute/tiled-copy) - Tiled copy operations

@@ -1,0 +1,521 @@
+---
+title: 'Epilogue Operations'
+description: 'Customize output operations with CUTLASS epilogue functors'
+---
+
+## Overview
+
+The epilogue is the final stage of a GEMM or convolution kernel that processes the accumulated result before writing to output memory. CUTLASS provides a flexible system for customizing epilogue operations through template-based functors.
+
+<Note>
+  The epilogue allows you to fuse additional operations (activation functions, bias addition, etc.) directly into the GEMM/convolution kernel, eliminating separate kernel launches and memory bandwidth overhead.
+</Note>
+
+## Standard Epilogue: Linear Combination
+
+The default epilogue performs a linear combination:
+
+```
+D = alpha * accumulator + beta * C
+```
+
+### LinearCombination Template
+
+```cpp include/cutlass/epilogue/thread/linear_combination.h:58
+template <
+  typename ElementOutput_,                      // Output data type
+  int Count,                                    // Elements per operation
+  typename ElementAccumulator_ = ElementOutput_,// Accumulator type
+  typename ElementCompute_ = ElementOutput_,    // Computation type
+  ScaleType::Kind Scale = ScaleType::Default,   // Scaling mode
+  FloatRoundStyle Round = FloatRoundStyle::round_to_nearest,
+  typename ElementSource_ = ElementOutput_      // Source (C) type
+>
+class LinearCombination;
+```
+
+### Template Parameters
+
+<ParamField path="ElementOutput_" type="typename">
+  Data type for output tensor D (e.g., `float`, `cutlass::half_t`)
+</ParamField>
+
+<ParamField path="Count" type="int">
+  Number of elements processed per operation (vectorization factor)
+  
+  Typically `128 / sizeof_bits<ElementOutput_>` for optimal memory bandwidth
+</ParamField>
+
+<ParamField path="ElementAccumulator_" type="typename" default="ElementOutput_">
+  Data type of the accumulated result from the main loop
+</ParamField>
+
+<ParamField path="ElementCompute_" type="typename" default="ElementOutput_">
+  Data type used for alpha/beta computation (often higher precision)
+</ParamField>
+
+<ParamField path="Scale" type="ScaleType::Kind" default="ScaleType::Default">
+  Scaling behavior:
+  - `ScaleType::Default` - Standard alpha/beta scaling
+  - `ScaleType::NoBetaScaling` - Beta is always 0
+  - `ScaleType::OnlyAlphaScaling` - Only alpha scaling, no beta term
+</ParamField>
+
+<ParamField path="Round" type="FloatRoundStyle" default="round_to_nearest">
+  Rounding mode for type conversions
+</ParamField>
+
+### Params Structure
+
+```cpp include/cutlass/epilogue/thread/linear_combination.h:89
+struct Params {
+  ElementCompute alpha;                         // Alpha scalar
+  ElementCompute beta;                          // Beta scalar
+  ElementCompute const *alpha_ptr;              // Pointer to alpha (if dynamic)
+  ElementCompute const *beta_ptr;               // Pointer to beta (if dynamic)
+  ElementCompute const* const* alpha_ptr_array; // Per-batch alpha
+  ElementCompute const* const* beta_ptr_array;  // Per-batch beta
+};
+```
+
+<ParamField path="alpha" type="ElementCompute">
+  Scalar multiplier for the accumulator
+</ParamField>
+
+<ParamField path="beta" type="ElementCompute">
+  Scalar multiplier for the source tensor C
+</ParamField>
+
+<ParamField path="alpha_ptr" type="ElementCompute const*">
+  Pointer to alpha in device memory (enables per-problem alpha)
+</ParamField>
+
+<ParamField path="beta_ptr" type="ElementCompute const*">
+  Pointer to beta in device memory
+</ParamField>
+
+## Activation Function Epilogues
+
+CUTLASS provides epilogues with fused activation functions:
+
+### ReLU
+
+```cpp include/cutlass/epilogue/thread/linear_combination_relu.h
+// D = ReLU(alpha * acc + beta * C)
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationRelu<
+  float,    // ElementOutput
+  128 / cutlass::sizeof_bits<float>::value,
+  float,    // ElementAccumulator
+  float     // ElementCompute
+>;
+```
+
+Computes: `D = max(0, alpha * accumulator + beta * C)`
+
+### GELU
+
+```cpp include/cutlass/epilogue/thread/linear_combination_gelu.h
+// D = GELU(alpha * acc + beta * C)
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationGELU<
+  float,
+  128 / cutlass::sizeof_bits<float>::value,
+  float,
+  float
+>;
+```
+
+Computes: `D = x * 0.5 * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))`
+
+where `x = alpha * accumulator + beta * C`
+
+### Sigmoid
+
+```cpp include/cutlass/epilogue/thread/linear_combination_sigmoid.h
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationSigmoid<
+  float,
+  128 / cutlass::sizeof_bits<float>::value,
+  float,
+  float
+>;
+```
+
+Computes: `D = sigmoid(alpha * accumulator + beta * C) = 1 / (1 + exp(-x))`
+
+### SiLU (Swish)
+
+```cpp include/cutlass/epilogue/thread/linear_combination_silu.h
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationSilu<
+  float,
+  128 / cutlass::sizeof_bits<float>::value,
+  float,
+  float
+>;
+```
+
+Computes: `D = x * sigmoid(x)` where `x = alpha * accumulator + beta * C`
+
+### Hardswish
+
+```cpp include/cutlass/epilogue/thread/linear_combination_hardswish.h
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationHardswish<
+  float,
+  128 / cutlass::sizeof_bits<float>::value,
+  float,
+  float
+>;
+```
+
+Computes: `D = x * ReLU6(x + 3) / 6` where `x = alpha * accumulator + beta * C`
+
+### Leaky ReLU
+
+```cpp include/cutlass/epilogue/thread/linear_combination_leaky_relu.h
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationLeakyRelu<
+  float,
+  128 / cutlass::sizeof_bits<float>::value,
+  float,
+  float,
+  0.01f  // leaky_alpha parameter
+>;
+```
+
+Computes: `D = x > 0 ? x : leaky_alpha * x` where `x = alpha * accumulator + beta * C`
+
+## Bias Addition
+
+### Linear Combination with Bias
+
+```cpp include/cutlass/epilogue/thread/linear_combination_bias_elementwise.h
+// D = Activation(alpha * acc + beta * C + bias)
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationBiasElementwise<
+  cutlass::epilogue::thread::ReLu,  // Activation function
+  float,                             // ElementOutput
+  128 / cutlass::sizeof_bits<float>::value,
+  float,                             // ElementAccumulator  
+  float,                             // ElementBias
+  float                              // ElementCompute
+>;
+```
+
+This epilogue adds a per-channel bias vector before applying an activation.
+
+### Params Structure for Bias
+
+```cpp
+struct Params {
+  ElementCompute alpha;
+  ElementCompute beta;
+  ElementCompute const *alpha_ptr;
+  ElementCompute const *beta_ptr;
+  ElementBias const *bias_ptr;      // Pointer to bias vector
+};
+
+// Usage
+EpilogueOp::Params params(
+  1.0f,       // alpha
+  0.0f,       // beta  
+  nullptr,    // alpha_ptr
+  nullptr,    // beta_ptr
+  bias_ptr    // bias vector
+);
+```
+
+## Clamping Operations
+
+### Linear Combination with Clamp
+
+```cpp include/cutlass/epilogue/thread/linear_combination_clamp.h
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationClamp<
+  float,
+  128 / cutlass::sizeof_bits<float>::value,
+  float,
+  float
+>;
+
+// Params with min/max bounds
+EpilogueOp::Params params;
+params.alpha = 1.0f;
+params.beta = 0.0f;
+params.min_value = 0.0f;   // Minimum output value
+params.max_value = 6.0f;   // Maximum output value (for ReLU6)
+```
+
+Computes: `D = clamp(alpha * accumulator + beta * C, min_value, max_value)`
+
+## Complete GEMM Example with Epilogue
+
+From `examples/12_gemm_bias_relu/gemm_bias_relu.cu`:
+
+<CodeGroup>
+
+```cpp Kernel Definition
+#include "cutlass/gemm/device/gemm.h"
+#include "cutlass/epilogue/thread/linear_combination_relu.h"
+
+// GEMM with ReLU activation
+using GemmKernel = cutlass::gemm::device::Gemm<
+  cutlass::half_t,                    // ElementA
+  cutlass::layout::RowMajor,          // LayoutA
+  cutlass::half_t,                    // ElementB
+  cutlass::layout::RowMajor,          // LayoutB
+  cutlass::half_t,                    // ElementC
+  cutlass::layout::RowMajor,          // LayoutC
+  float,                              // ElementAccumulator
+  cutlass::arch::OpClassTensorOp,     // OpClass
+  cutlass::arch::Sm80,                // ArchTag
+  cutlass::gemm::GemmShape<128, 128, 32>,
+  cutlass::gemm::GemmShape<64, 64, 32>,
+  cutlass::gemm::GemmShape<16, 8, 16>,
+  cutlass::epilogue::thread::LinearCombinationRelu<  // Custom epilogue
+    cutlass::half_t,
+    128 / cutlass::sizeof_bits<cutlass::half_t>::value,
+    float,
+    float
+  >,
+  cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+  3  // Stages
+>;
+```
+
+```cpp Kernel Launch
+GemmKernel gemm_op;
+
+// Epilogue parameters (alpha=1.0, beta=0.0)
+float alpha = 1.0f;
+float beta = 0.0f;
+
+GemmKernel::Arguments args(
+  {M, N, K},
+  {d_A, lda},
+  {d_B, ldb},
+  {d_C, ldc},
+  {d_D, ldd},
+  {alpha, beta}  // ReLU applied to (alpha * acc + beta * C)
+);
+
+cutlass::Status status = gemm_op(args);
+```
+
+</CodeGroup>
+
+## Broadcasting and Reduction Epilogues
+
+### Tensor Broadcast
+
+```cpp include/cutlass/epilogue/thread/linear_combination_tensor_broadcast.hpp
+// Broadcast a row or column vector during epilogue
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationTensorBroadcast<
+  float,
+  128 / cutlass::sizeof_bits<float>::value,
+  float,
+  float
+>;
+```
+
+Enables broadcasting operations like adding a bias vector along specific dimensions.
+
+## Planar Complex Epilogues
+
+For complex-valued GEMM with planar (split real/imaginary) storage:
+
+```cpp include/cutlass/epilogue/thread/linear_combination_planar_complex.h
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationPlanarComplex<
+  cutlass::complex<float>,  // ElementOutput
+  float,                    // ElementScalar
+  128 / cutlass::sizeof_bits<float>::value
+>;
+```
+
+## Generic Epilogue with Custom Operations
+
+### LinearCombinationGeneric
+
+```cpp include/cutlass/epilogue/thread/linear_combination_generic.h
+template <class ActivationFunctor>
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationGeneric<
+  ActivationFunctor,  // User-defined activation
+  float,              // ElementOutput
+  128 / cutlass::sizeof_bits<float>::value,
+  float,              // ElementAccumulator
+  float               // ElementCompute
+>;
+```
+
+Allows specifying custom activation functors:
+
+```cpp Custom Activation
+template <typename T>
+struct MyActivation {
+  CUTLASS_HOST_DEVICE
+  T operator()(T const &scalar) const {
+    // Custom computation
+    return scalar * scalar;  // Example: square activation
+  }
+};
+
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationGeneric<
+  MyActivation<float>,
+  float,
+  8,
+  float,
+  float
+>;
+```
+
+## Per-Channel vs Per-Tensor Scaling
+
+### Per-Tensor (Default)
+
+```cpp
+// Single alpha/beta for entire output
+float alpha = 1.0f;
+float beta = 0.0f;
+
+EpilogueOp::Params params(alpha, beta);
+```
+
+### Per-Channel (Blockwise)
+
+```cpp
+// Different alpha/beta per output channel
+float *alpha_array;  // Size: N (number of output channels)
+float *beta_array;   // Size: N
+
+EpilogueOp::Params params(
+  alpha_array,  // Per-channel alphas
+  beta_array    // Per-channel betas
+);
+```
+
+## Epilogue Visitor Pattern (CUTLASS 3.x)
+
+CUTLASS 3.x introduces a visitor-based epilogue for maximum flexibility:
+
+```cpp Epilogue Visitor
+// Define custom visitor
+struct MyEpilogueVisitor {
+  template <typename AccumulatorTile, typename OutputTile>
+  CUTLASS_DEVICE void operator()(
+    AccumulatorTile const& accumulator,
+    OutputTile& output,
+    int thread_idx) {
+    
+    // Custom per-element operation
+    // Can access accumulator and write to output
+  }
+};
+```
+
+## Performance Considerations
+
+<Card title="Vectorization" icon="forward-fast">
+  Set `Count` to maximize vectorized memory access (typically 128 bits / element size)
+</Card>
+
+<Card title="Register Pressure" icon="microchip">
+  Complex epilogues increase register usage - may reduce occupancy
+</Card>
+
+<Card title="Compute vs Memory" icon="scale-balanced">
+  Epilogue fusion is beneficial when compute cost is much less than memory bandwidth
+</Card>
+
+<Card title="Type Conversion" icon="shuffle">
+  Be mindful of precision when `ElementAccumulator ≠ ElementOutput`
+</Card>
+
+## Available Epilogue Types
+
+<CardGroup cols={2}>
+
+<Card title="LinearCombination" icon="equals">
+  Standard `D = α * acc + β * C`
+</Card>
+
+<Card title="LinearCombinationRelu" icon="chart-line">
+  With ReLU: `D = max(0, α * acc + β * C)`
+</Card>
+
+<Card title="LinearCombinationGELU" icon="wave-sine">
+  With GELU activation
+</Card>
+
+<Card title="LinearCombinationSigmoid" icon="wave-pulse">
+  With Sigmoid activation
+</Card>
+
+<Card title="LinearCombinationSilu" icon="wave-triangle">
+  With SiLU (Swish) activation
+</Card>
+
+<Card title="LinearCombinationBiasRelu" icon="plus">
+  With bias addition and ReLU
+</Card>
+
+<Card title="LinearCombinationClamp" icon="compress">
+  With min/max clamping
+</Card>
+
+<Card title="LinearCombinationGeneric" icon="wand-magic-sparkles">
+  Custom user-defined activation
+</Card>
+
+</CardGroup>
+
+## Common Patterns
+
+### No Source Tensor (β = 0)
+
+```cpp
+// Only alpha * accumulator, no C term
+float alpha = 1.0f;
+float beta = 0.0f;  // C not loaded
+
+EpilogueOp::Params params(alpha, beta);
+```
+
+### In-Place Operation (D = C)
+
+```cpp
+// Overwrite C with result
+GemmKernel::Arguments args(
+  {M, N, K},
+  {d_A, lda},
+  {d_B, ldb},
+  {d_C, ldc},
+  {d_C, ldc},  // D and C point to same memory
+  {alpha, beta}
+);
+```
+
+### Accumulation Mode (α = 1, β = 1)
+
+```cpp
+// D = accumulator + C (accumulate into C)
+float alpha = 1.0f;
+float beta = 1.0f;
+
+EpilogueOp::Params params(alpha, beta);
+```
+
+## See Also
+
+<CardGroup cols={2}>
+
+<Card title="GEMM API" icon="calculator" href="/cpp/gemm-api">
+  Learn how epilogues integrate with GEMM kernels
+</Card>
+
+<Card title="Convolution API" icon="grip" href="/cpp/convolution">
+  Epilogues work the same way for convolutions
+</Card>
+
+<Card title="Custom Kernels" icon="code" href="/examples">
+  Examples of custom epilogue implementations
+</Card>
+
+<Card title="Fusion Techniques" icon="layer-group" href="/performance">
+  Performance optimization through operation fusion
+</Card>
+
+</CardGroup>

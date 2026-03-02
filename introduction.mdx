@@ -1,0 +1,125 @@
+---
+title: Introduction to CUTLASS
+description: High-performance CUDA C++ and Python template library for linear algebra operations at all levels and scales
+---
+
+CUTLASS is a collection of CUDA C++ and Python template abstractions for implementing high-performance matrix-matrix multiplication (GEMM) and related computations at all levels and scales within CUDA. It incorporates strategies for hierarchical decomposition and data movement, enabling developers to achieve peak performance on NVIDIA GPUs.
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Get up and running with CUTLASS in minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install CUTLASS for C++ or Python
+  </Card>
+  <Card title="C++ documentation" icon="code" href="https://docs.nvidia.com/cutlass/latest/media/docs/cpp/quickstart.html">
+    Explore the C++ API and templates
+  </Card>
+  <Card title="Python DSL" icon="python" href="https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/quick_start.html">
+    Write CUDA kernels in Python with CuTe DSL
+  </Card>
+</CardGroup>
+
+## What is CUTLASS?
+
+CUTLASS decomposes GPU linear algebra operations into reusable, modular software components at different levels of the parallelization hierarchy. Primitives for different levels can be specialized and tuned via custom tiling sizes, data types, and algorithmic policies. This flexibility simplifies their use as building blocks within custom kernels and applications.
+
+### Two programming models
+
+CUTLASS offers two complementary approaches:
+
+**CUTLASS C++ Templates** - Template abstractions providing extensive support for:
+- Mixed-precision computations (FP64, FP32, TF32, FP16, BF16, FP8, FP4, INT8, INT4)
+- Block-scaled data types (NVIDIA NVFP4, OCP MXFP4/MXFP6/MXFP8)
+- Specialized data-movement (async copy) and multiply-accumulate abstractions
+- Support for Volta, Turing, Ampere, Ada, Hopper, and Blackwell architectures
+
+**CuTe DSL (Python)** - A Python native interface for writing high-performance CUDA kernels:
+- Write kernels in Python without performance compromises
+- Orders of magnitude faster compile times vs C++
+- Native integration with deep learning frameworks
+- Intuitive metaprogramming without deep C++ expertise
+- Fully consistent with CuTe C++ abstractions
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Peak performance" icon="gauge-high">
+    Achieves nearly optimal utilization of theoretical peak throughput across all supported GPU architectures
+  </Card>
+  <Card title="Hierarchical decomposition" icon="layer-group">
+    Modular components at thread, warp, threadblock, and device levels
+  </Card>
+  <Card title="Extensive data type support" icon="database">
+    From FP64 to binary 1-bit types, including block-scaled formats
+  </Card>
+  <Card title="CuTe layout algebra" icon="table">
+    Powerful abstractions for describing and manipulating tensors of threads and data
+  </Card>
+  <Card title="Tensor Core acceleration" icon="microchip">
+    Optimized support for programmable Tensor Cores on modern NVIDIA GPUs
+  </Card>
+  <Card title="Header-only library" icon="file-code">
+    Easy integration - just point your compiler at the include directory
+  </Card>
+</CardGroup>
+
+## Performance
+
+CUTLASS primitives are extremely efficient. When used to construct device-wide GEMM kernels, they exhibit nearly optimal utilization of peak theoretical throughput across various data types and GPU architectures.
+
+<Note>
+On NVIDIA Blackwell SM100 GPUs, CUTLASS 3.8 achieves 90%+ of theoretical peak performance across FP64, TF32, FP16, BF16, FP8, and INT8 operations.
+</Note>
+
+## Who uses CUTLASS?
+
+CUTLASS is designed for:
+
+- **ML/AI developers** building custom operators for deep learning frameworks
+- **HPC researchers** implementing specialized linear algebra kernels
+- **Performance engineers** optimizing GPU-accelerated applications
+- **Students and researchers** learning GPU programming and optimization
+- **Framework developers** integrating high-performance primitives into libraries
+
+## Architecture support
+
+CUTLASS supports NVIDIA GPUs from compute capability 7.0 onwards:
+
+| Architecture | Compute Capability | Example GPUs |
+|--------------|-------------------|-------------|
+| Volta | 7.0 | V100, Titan V |
+| Turing | 7.5 | RTX 20 series, T4 |
+| Ampere | 8.0, 8.6 | A100, RTX 30 series |
+| Ada | 8.9 | RTX 40 series, L40 |
+| Hopper | 9.0 | H100, H200 |
+| Blackwell | 10.0, 10.3, 11.0, 12.0 | B200, B300, RTX 50 series |
+
+## What's included
+
+The CUTLASS project includes:
+
+- **Header-only template library** - Core CUTLASS and CuTe abstractions
+- **100+ examples** - Demonstrating various operations and optimizations
+- **Python interface** - High-level API for compiling and running kernels from Python
+- **CuTe Python DSL** - Write CUDA kernels in Python
+- **Profiler tool** - Command-line utility for benchmarking kernels
+- **Comprehensive documentation** - Guides, API references, and tutorials
+- **Unit tests** - Extensive test suite ensuring correctness
+
+## Getting started
+
+Ready to start using CUTLASS? Choose your path:
+
+<CardGroup cols={2}>
+  <Card title="Quick start guide" icon="rocket" href="/quickstart">
+    Jump right in with a working GEMM example
+  </Card>
+  <Card title="Installation guide" icon="download" href="/installation">
+    Set up CUTLASS on your system
+  </Card>
+</CardGroup>
+
+## License
+
+CUTLASS is released by NVIDIA Corporation as open source software under the [BSD 3-Clause License](https://github.com/NVIDIA/cutlass/blob/main/LICENSE.txt).

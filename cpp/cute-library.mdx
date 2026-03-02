@@ -1,0 +1,573 @@
+---
+title: 'CuTe Library'
+description: 'CuTe - A modern C++ template library for tensor operations in CUDA'
+---
+
+## Introduction
+
+CuTe (CUDA Templates) is a collection of C++ CUDA template abstractions for defining and operating on hierarchically multidimensional layouts of threads and data. It provides a composable, structured approach to writing high-performance CUDA kernels.
+
+<Note>
+  CuTe is the foundation for CUTLASS 3.x kernels and provides a more modern, composable alternative to the CUTLASS 2.x hierarchy.
+</Note>
+
+## Core Concepts
+
+CuTe is built around three fundamental abstractions:
+
+<CardGroup cols={3}>
+
+<Card title="Layout" icon="table-cells">
+  Describes the mapping from logical coordinates to linear indices
+</Card>
+
+<Card title="Tensor" icon="cube">
+  Combines data (pointer) with a Layout to provide structured access
+</Card>
+
+<Card title="Algorithms" icon="wand-magic-sparkles">
+  Operations on Tensors (copy, fill, GEMM, etc.)
+</Card>
+
+</CardGroup>
+
+## Layouts
+
+Layouts define the relationship between multi-dimensional coordinates and linear memory addresses.
+
+### Layout Definition
+
+```cpp include/cute/layout.hpp:98
+template <class Shape, class Stride = LayoutLeft::Apply<Shape>>
+struct Layout {
+  CUTE_HOST_DEVICE constexpr
+  Layout(Shape const& shape = {}, Stride const& stride = {});
+  
+  template <int... I>
+  CUTE_HOST_DEVICE constexpr
+  decltype(auto) shape() const;
+  
+  template <int... I>
+  CUTE_HOST_DEVICE constexpr
+  decltype(auto) stride() const;
+};
+```
+
+### Creating Layouts
+
+<CodeGroup>
+
+```cpp Basic Layouts
+using namespace cute;
+
+// 1D layout: 8 elements
+auto layout_1d = make_layout(8);
+
+// 2D layout: 4×8 column-major
+auto layout_2d = make_layout(
+  make_shape(4, 8),           // Shape: (4, 8)
+  make_stride(1, 4)           // Stride: (1, 4) - column-major
+);
+
+// 2D layout: 4×8 row-major
+auto layout_2d_row = make_layout(
+  make_shape(4, 8),
+  make_stride(8, 1)           // Stride: (8, 1) - row-major
+);
+
+// Hierarchical layout: (4,8):(1,4) partitioned as ((2,2),(4,2))
+auto layout_hier = make_layout(
+  make_shape(make_shape(2, 2), make_shape(4, 2)),
+  make_stride(make_stride(1, 2), make_stride(4, 16))
+);
+```
+
+```cpp Compile-Time Layouts
+using namespace cute;
+
+// Compile-time shape and stride using Int<N>
+auto static_layout = make_layout(
+  make_shape(Int<4>{}, Int<8>{}),
+  make_stride(Int<1>{}, Int<4>{})
+);
+
+// Mixed static/dynamic
+auto mixed_layout = make_layout(
+  make_shape(Int<4>{}, 8),    // First mode static, second dynamic
+  make_stride(Int<1>{}, 4)
+);
+```
+
+</CodeGroup>
+
+### Layout Operations
+
+<ParamField path="make_layout(shape, stride)" type="function">
+  Creates a Layout from a shape and stride
+</ParamField>
+
+<ParamField path="size(layout)" type="function">
+  Returns the total number of elements in the layout
+</ParamField>
+
+<ParamField path="rank(layout)" type="function">
+  Returns the number of dimensions (modes) in the layout
+</ParamField>
+
+<ParamField path="depth(layout)" type="function">
+  Returns the hierarchical depth of the layout
+</ParamField>
+
+<ParamField path="coalesce(layout)" type="function">
+  Simplifies the layout by merging adjacent modes with compatible strides
+</ParamField>
+
+## Tensors
+
+Tensors combine a pointer with a Layout to provide structured multi-dimensional views of data.
+
+### Tensor Definition
+
+```cpp include/cute/tensor_impl.hpp
+template <class Engine, class Layout>
+struct Tensor {
+  using iterator     = typename Engine::iterator;
+  using value_type   = typename Engine::value_type;
+  using element_type = typename Engine::element_type;
+  using reference    = typename Engine::reference;
+};
+```
+
+### Creating Tensors
+
+<CodeGroup>
+
+```cpp Global Memory Tensors
+using namespace cute;
+
+// Create tensor from global memory pointer
+float* gmem_ptr = /* ... */;
+auto gmem_tensor = make_tensor(
+  make_gmem_ptr(gmem_ptr),
+  make_layout(make_shape(M, N), make_stride(1, M))  // Column-major
+);
+
+// Indexing: gmem_tensor(i, j) accesses element at row i, column j
+float value = gmem_tensor(2, 3);
+```
+
+```cpp Shared Memory Tensors
+using namespace cute;
+
+// Allocate shared memory
+__shared__ float smem[128];
+
+// Create tensor view
+auto smem_tensor = make_tensor(
+  make_smem_ptr(smem),
+  make_layout(make_shape(16, 8), make_stride(1, 16))
+);
+
+// Access: smem_tensor(i, j)
+```
+
+```cpp Register Tensors
+using namespace cute;
+
+// Register-backed tensor (compile-time shape)
+auto reg_tensor = make_tensor<float>(
+  make_layout(make_shape(Int<4>{}, Int<8>{}))  // 4×8 in registers
+);
+
+// Allocated in thread-local registers
+```
+
+</CodeGroup>
+
+### Tensor Operations
+
+<ParamField path="make_tensor(pointer, layout)" type="function">
+  Creates a Tensor from a pointer and layout
+</ParamField>
+
+<ParamField path="local_tile(tensor, tile_shape, coord)" type="function">
+  Extracts a tile from a tensor at the given coordinate
+</ParamField>
+
+<ParamField path="local_partition(tensor, thread_layout, thread_id)" type="function">
+  Partitions a tensor across threads according to a thread layout
+</ParamField>
+
+<ParamField path="make_tensor_like(tensor)" type="function">
+  Creates a new tensor with the same shape and layout (useful for accumulators)
+</ParamField>
+
+## Practical Example: GEMM Kernel
+
+From `examples/cute/tutorial/sgemm_1.cu`:
+
+<CodeGroup>
+
+```cpp Tensor Setup
+template <class ProblemShape, class CtaTiler,
+          class TA, class AStride,
+          class TB, class BStride,
+          class TC, class CStride,
+          class Alpha, class Beta>
+__global__ void gemm_device(
+    ProblemShape shape_MNK, CtaTiler cta_tiler,
+    TA const* A, AStride dA,
+    TB const* B, BStride dB,
+    TC* C, CStride dC,
+    Alpha alpha, Beta beta) {
+  
+  using namespace cute;
+  
+  // Create full tensor views
+  Tensor mA = make_tensor(make_gmem_ptr(A), 
+                          select<0,2>(shape_MNK), dA);  // (M,K)
+  Tensor mB = make_tensor(make_gmem_ptr(B), 
+                          select<1,2>(shape_MNK), dB);  // (N,K)
+  Tensor mC = make_tensor(make_gmem_ptr(C), 
+                          select<0,1>(shape_MNK), dC);  // (M,N)
+  
+  // Get this CTA's tile
+  auto cta_coord = make_coord(blockIdx.x, blockIdx.y, _);
+  Tensor gA = local_tile(mA, cta_tiler, cta_coord, Step<_1, X,_1>{});
+  Tensor gB = local_tile(mB, cta_tiler, cta_coord, Step< X,_1,_1>{});
+  Tensor gC = local_tile(mC, cta_tiler, cta_coord, Step<_1,_1, X>{});
+}
+```
+
+```cpp Shared Memory Buffers
+// Allocate shared memory
+__shared__ TA smemA[cosize_v<ASmemLayout>];
+__shared__ TB smemB[cosize_v<BSmemLayout>];
+
+// Create shared memory tensors
+Tensor sA = make_tensor(make_smem_ptr(smemA), sA_layout);
+Tensor sB = make_tensor(make_smem_ptr(smemB), sB_layout);
+```
+
+```cpp Thread Partitioning
+// Partition tiles across threads
+Tensor tAgA = local_partition(gA, tA, threadIdx.x);  // Global A
+Tensor tAsA = local_partition(sA, tA, threadIdx.x);  // Shared A
+
+Tensor tBgB = local_partition(gB, tB, threadIdx.x);
+Tensor tBsB = local_partition(sB, tB, threadIdx.x);
+
+// Partition for computation
+Tensor tCsA = local_partition(sA, tC, threadIdx.x, Step<_1, X>{});
+Tensor tCsB = local_partition(sB, tC, threadIdx.x, Step< X,_1>{});
+Tensor tCgC = local_partition(gC, tC, threadIdx.x, Step<_1,_1>{});
+
+// Allocate accumulator
+Tensor tCrC = make_tensor_like(tCgC);
+clear(tCrC);
+```
+
+```cpp Main Loop
+// GEMM main loop
+for (int k_tile = 0; k_tile < K_TILE_MAX; ++k_tile) {
+  // Copy global to shared memory
+  copy(tAgA(_,_,k_tile), tAsA);
+  copy(tBgB(_,_,k_tile), tBsB);
+  
+  cp_async_fence();        // Fence async copies
+  cp_async_wait<0>();      // Wait for copies
+  __syncthreads();
+  
+  // Compute on shared memory
+  gemm(tCsA, tCsB, tCrC);  // Accumulate into tCrC
+  
+  __syncthreads();
+}
+
+// Epilogue: alpha * C + beta * D
+axpby(alpha, tCrC, beta, tCgC);
+```
+
+</CodeGroup>
+
+## Algorithms
+
+CuTe provides high-level algorithms for common operations.
+
+### Copy Operations
+
+```cpp include/cute/algorithm/copy.hpp
+// Simple copy
+copy(src_tensor, dst_tensor);
+
+// Async copy (Ampere+)
+copy_async(src_tensor, dst_tensor);
+
+// Copy with predication
+copy_if(predicate, src_tensor, dst_tensor);
+
+// Cooperative copy across thread group
+cooperative_copy<NumThreads>(tid, src_tensor, dst_tensor);
+```
+
+### Fill and Clear
+
+```cpp Fill Operations
+// Fill with value
+fill(tensor, 3.14f);
+
+// Clear to zero
+clear(tensor);
+```
+
+### GEMM Algorithm
+
+```cpp include/cute/algorithm/gemm.hpp
+// Register-level GEMM: D = A * B + C
+gemm(A_tensor, B_tensor, C_tensor);
+
+// Cooperative GEMM across thread group
+cooperative_gemm<NumThreads>(tid, A_tensor, B_tensor, C_tensor);
+```
+
+### AXPBY (Linear Combination)
+
+```cpp AXPBY
+// Y = alpha * X + beta * Y
+axpby(alpha, X_tensor, beta, Y_tensor);
+```
+
+## Special Layouts and Patterns
+
+### Swizzling
+
+Swizzled layouts reduce shared memory bank conflicts:
+
+```cpp Swizzled Layout
+using namespace cute;
+
+// Create swizzled layout for shared memory
+auto smem_layout = composition(
+  Swizzle<3,0,3>{},              // XOR swizzle pattern
+  make_layout(make_shape(128, 32), make_stride(1, 128))
+);
+```
+
+### Blocked Layouts
+
+```cpp Blocked Layouts
+// Create blocked/tiled layout
+auto blocked = blocked_product(
+  make_layout(make_shape(4, 8)),    // Outer block shape
+  make_layout(make_shape(2, 2))     // Inner tile shape
+);
+// Results in ((4,2),(8,2)) layout
+```
+
+## Type System
+
+### Compile-Time Integers
+
+```cpp Integral Constants
+using namespace cute;
+
+// Compile-time integer
+Int<4> static_four{};
+
+// Arithmetic at compile time
+auto result = Int<4>{} * Int<8>{};  // Int<32>
+
+// Underscore for dynamic dimensions
+auto shape = make_shape(Int<4>{}, _, Int<8>{});
+```
+
+### Tuples
+
+```cpp Tuple Types
+using namespace cute;
+
+// Create tuple
+auto t = make_tuple(1, 2, 3);
+
+// Access elements
+auto first = get<0>(t);   // 1
+auto second = get<1>(t);  // 2
+
+// Hierarchical tuples
+auto nested = make_tuple(
+  make_tuple(1, 2),
+  make_tuple(3, 4)
+);
+```
+
+## Atom Types
+
+Atoms describe hardware-specific instruction patterns.
+
+### Copy Atoms
+
+```cpp Copy Atoms
+#include <cute/atom/copy_atom.hpp>
+
+// LDG.128 - 128-bit global memory load
+using GmemLoadAtom = Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, float>;
+
+// LDSM - Shared memory load for matrix
+using SmemLoadAtom = Copy_Atom<SM75_U32x4_LDSM_N, half_t>;
+```
+
+### MMA Atoms
+
+```cpp MMA Atoms
+#include <cute/atom/mma_atom.hpp>
+
+// Tensor Core MMA atom (Ampere)
+using MmaAtom = MMA_Atom<SM80_16x8x16_F16F16F16F16_TN>;
+
+// SIMT FMA atom
+using SimtMma = MMA_Atom<SM70_8x8x4_F32F16F16F32_TN>;
+```
+
+## Debugging and Visualization
+
+### Print Utilities
+
+```cpp Printing
+using namespace cute;
+
+// Print layout
+auto layout = make_layout(make_shape(4, 8), make_stride(1, 4));
+print(layout);
+// Output: (4,8):(1,4)
+
+// Print tensor
+Tensor tensor = make_tensor(ptr, layout);
+print_tensor(tensor);
+
+// Print in LaTeX format for documentation
+print_latex(layout);
+```
+
+### Compile-Time Assertions
+
+```cpp Static Assertions
+CUTE_STATIC_ASSERT_V(size(layout) == Int<32>{});
+CUTE_STATIC_ASSERT_V(rank(layout) == Int<2>{});
+CUTE_STATIC_ASSERT_V(is_static<decltype(layout)>::value);
+```
+
+## Key Functions Reference
+
+### Shape and Stride Utilities
+
+<ParamField path="make_shape(...)" type="function">
+  Creates a Shape tuple from arguments
+</ParamField>
+
+<ParamField path="make_stride(...)" type="function">
+  Creates a Stride tuple from arguments
+</ParamField>
+
+<ParamField path="make_coord(...)" type="function">
+  Creates a coordinate tuple for indexing
+</ParamField>
+
+<ParamField path="size<I>(layout)" type="function">
+  Returns the size of mode I (or total size if I omitted)
+</ParamField>
+
+<ParamField path="shape<I>(layout)" type="function">
+  Returns the shape of mode I (or full shape if I omitted)
+</ParamField>
+
+<ParamField path="stride<I>(layout)" type="function">
+  Returns the stride of mode I (or full stride if I omitted)
+</ParamField>
+
+### Composition and Manipulation
+
+<ParamField path="composition(layout_a, layout_b)" type="function">
+  Composes two layouts: layout_b ∘ layout_a
+</ParamField>
+
+<ParamField path="complement(layout, shape)" type="function">
+  Returns the complementary layout within a given shape
+</ParamField>
+
+<ParamField path="logical_divide(layout, tile)" type="function">
+  Divides a layout into tiles
+</ParamField>
+
+<ParamField path="zipped_divide(layout, tile)" type="function">
+  Divides and interleaves (for thread partitioning)
+</ParamField>
+
+## Best Practices
+
+<Card title="Use Static Shapes When Possible" icon="bolt">
+  Static shapes (`Int<N>`) enable compile-time optimizations and better code generation.
+</Card>
+
+<Card title="Leverage Layout Composition" icon="layer-group">
+  Build complex layouts by composing simpler ones - this is more maintainable and often more efficient.
+</Card>
+
+<Card title="Partition Before Loop" icon="arrows-split-up-and-left">
+  Partition tensors across threads outside loops to avoid recomputation.
+</Card>
+
+<Card title="Use Typed Tensors" icon="shield">
+  Let CuTe's type system catch shape mismatches at compile time.
+</Card>
+
+## Advanced Topics
+
+### TMA (Tensor Memory Accelerator)
+
+Hopper architecture's hardware-accelerated tensor loads:
+
+```cpp TMA Copy
+#include <cute/atom/copy_atom.hpp>
+
+// TMA descriptor-based copy
+using TmaLoadAtom = Copy_Atom<SM90_TMA_LOAD, float>;
+
+// Use in kernel with TMA descriptor
+```
+
+### Warp-Specialized Kernels
+
+Different warps perform different roles:
+
+```cpp Warp Specialization
+int warp_id = threadIdx.x / 32;
+int lane_id = threadIdx.x % 32;
+
+if (warp_id == 0) {
+  // Producer warp: load data
+} else {
+  // Consumer warp: compute
+}
+```
+
+## See Also
+
+<CardGroup cols={2}>
+
+<Card title="CuTe Tutorials" icon="book">
+  Examples in `examples/cute/tutorial/` demonstrate progressive complexity
+</Card>
+
+<Card title="GEMM API" icon="calculator" href="/cpp/gemm-api">
+  High-level GEMM API built on CuTe (CUTLASS 3.x)
+</Card>
+
+<Card title="Architecture Guide" icon="microchip" href="/architectures">
+  Learn about architecture-specific features
+</Card>
+
+<Card title="Performance Guide" icon="gauge-high" href="/performance">
+  Optimize CuTe-based kernels
+</Card>
+
+</CardGroup>

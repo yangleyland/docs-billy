@@ -1,0 +1,546 @@
+---
+title: cute::TiledCopy
+description: CuTe TiledCopy for partitioning copy operations across threads
+---
+
+## Overview
+
+`cute::TiledCopy` represents a tiled copy operation that partitions data movement across multiple threads. It builds on `Copy_Atom` (hardware-level copy instructions like ldgsts, cp.async, TMA) by tiling them across threads and values.
+
+## Class Template
+
+```cpp
+template <class Copy_Atom,
+          class LayoutCopy_TV,  // (tid,vid) -> coord
+          class ShapeTiler_MN>  // coord space
+struct TiledCopy : Copy_Atom
+{
+  // Layout information from the CopyAtom
+  using AtomThrID     = typename Copy_Atom::ThrID;
+  using AtomLayoutSrc = typename Copy_Atom::ValLayoutSrc;
+  using AtomLayoutDst = typename Copy_Atom::ValLayoutDst;
+  using AtomLayoutRef = typename Copy_Atom::ValLayoutRef;
+  
+  // Layout information for the TiledCopy
+  using Tiler_MN       = ShapeTiler_MN;
+  using TiledLayout_TV = LayoutCopy_TV;
+  using TiledNumThr    = decltype(size<0>(TiledLayout_TV{}));
+  using TiledNumVal    = decltype(size<1>(TiledLayout_TV{}));
+};
+```
+
+### Template Parameters
+
+<ParamField path="Copy_Atom" type="Copy_Atom<CopyOperation, InternalType>">
+  The atomic copy operation (e.g., SM80_CP_ASYNC_CACHEALWAYS for async copy).
+</ParamField>
+
+<ParamField path="LayoutCopy_TV" type="Layout">
+  The (thread_id, value_id) -> coordinate layout specifying how threads and values map to coordinates.
+</ParamField>
+
+<ParamField path="ShapeTiler_MN" type="Shape">
+  The shape of the coordinate space being tiled (typically 2D for matrix operations).
+</ParamField>
+
+## Source Location
+
+`include/cute/atom/copy_atom.hpp:182-355`
+
+## Member Types
+
+### Value Type
+
+```cpp
+using ValType = CopyInternalType;  // The value type for copy operations
+```
+
+### Layout Types
+
+```cpp
+using AtomLayoutSrc = /* ... */;  // (thr,val) -> src offset
+using AtomLayoutDst = /* ... */;  // (thr,val) -> dst offset
+using AtomLayoutRef = /* ... */;  // (thr,val) -> ref offset
+```
+
+### Thread and Value Counts
+
+```cpp
+using AtomNumThr = decltype(size<0>(AtomLayoutRef{}));
+using AtomNumVal = decltype(size<1>(AtomLayoutRef{}));
+using TiledNumThr = decltype(size<0>(TiledLayout_TV{}));
+using TiledNumVal = decltype(size<1>(TiledLayout_TV{}));
+```
+
+## Member Functions
+
+### Tensor Partitioning
+
+#### tidfrg_S()
+
+```cpp
+template <class STensor>
+CUTE_HOST_DEVICE constexpr static auto
+tidfrg_S(STensor&& stensor);
+```
+
+Tiles a source tensor from shape `(M,N,...)` to shape `(Thr,(FrgV,FrgX),(RestM,RestN,...))`.
+
+**Parameters:**
+- `stensor`: The source tensor to partition
+
+**Returns:** Partitioned tensor with thread and fragment modes
+
+**Example:**
+```cpp
+auto gmem_src = make_tensor(src_ptr, make_shape(128, 128));
+auto thr_layout = tiled_copy.tidfrg_S(gmem_src);
+// Shape: (Thr, (FrgV,FrgX), (RestM,RestN))
+```
+
+#### tidfrg_D()
+
+```cpp
+template <class DTensor>
+CUTE_HOST_DEVICE constexpr static auto
+tidfrg_D(DTensor&& dtensor);
+```
+
+Tiles a destination tensor from shape `(M,N,...)` to shape `(Thr,(FrgV,FrgX),(RestM,RestN,...))`.
+
+**Parameters:**
+- `dtensor`: The destination tensor to partition
+
+**Returns:** Partitioned tensor with thread and fragment modes
+
+### Thread Slicing
+
+#### get_slice()
+
+```cpp
+template <class ThrIdx>
+CUTE_HOST_DEVICE static auto
+get_slice(ThrIdx const& thr_idx);
+```
+
+Returns a `ThrCopy` object for a specific thread index.
+
+**Parameters:**
+- `thr_idx`: Thread index within the TiledCopy
+
+**Returns:** `ThrCopy<TiledCopy, ThrIdx>` for per-thread copy operations
+
+**Example:**
+```cpp
+int tid = threadIdx.x;
+auto thr_copy = tiled_copy.get_slice(tid);
+```
+
+#### get_thread_slice()
+
+```cpp
+template <class ThrIdx>
+CUTE_HOST_DEVICE static auto
+get_thread_slice(ThrIdx const& thr_idx);
+```
+
+Alias for `get_slice()`. Returns per-thread copy object.
+
+### Layout Accessors
+
+#### get_layoutS_TV()
+
+```cpp
+CUTE_HOST_DEVICE constexpr static auto
+get_layoutS_TV();
+```
+
+Returns the (thread_idx, value_idx) -> (M, N) layout for the source tensor.
+
+#### get_layoutD_TV()
+
+```cpp
+CUTE_HOST_DEVICE constexpr static auto
+get_layoutD_TV();
+```
+
+Returns the (thread_idx, value_idx) -> (M, N) layout for the destination tensor.
+
+### Retiling
+
+#### retile()
+
+```cpp
+template <class Tensor>
+CUTE_HOST_DEVICE constexpr static auto
+retile(Tensor&& tensor);
+```
+
+Retiles a tensor according to the TiledCopy's value layout.
+
+## ThrCopy - Per-Thread Copy
+
+```cpp
+template <class TiledCopy, class ThrIdx>
+struct ThrCopy
+{
+  ThrIdx thr_idx_;
+  
+  CUTE_HOST_DEVICE
+  ThrCopy(ThrIdx const& thr_idx);
+};
+```
+
+Represents the copy operation for a single thread.
+
+### ThrCopy Methods
+
+#### partition_S()
+
+```cpp
+template <class STensor>
+CUTE_HOST_DEVICE auto
+partition_S(STensor&& stensor) const;
+```
+
+Partitions the source tensor for this thread.
+
+**Returns:** Per-thread view of source with shape `((FrgV,FrgX),(RestM,RestN,...))`
+
+**Example:**
+```cpp
+auto thr_copy = tiled_copy.get_slice(threadIdx.x);
+auto gmem = make_tensor(ptr, make_shape(128, 128));
+auto thr_gmem = thr_copy.partition_S(gmem);
+```
+
+#### partition_D()
+
+```cpp
+template <class DTensor>
+CUTE_HOST_DEVICE auto
+partition_D(DTensor&& dtensor) const;
+```
+
+Partitions the destination tensor for this thread.
+
+**Returns:** Per-thread view of destination with shape `((FrgV,FrgX),(RestM,RestN,...))`
+
+#### retile_S()
+
+```cpp
+template <class STensor>
+CUTE_HOST_DEVICE static auto
+retile_S(STensor&& stensor);
+```
+
+Retiles the source tensor according to the copy pattern.
+
+#### retile_D()
+
+```cpp
+template <class DTensor>
+CUTE_HOST_DEVICE static auto
+retile_D(DTensor&& dtensor);
+```
+
+Retiles the destination tensor according to the copy pattern.
+
+## Common Copy Atoms
+
+### Ampere (SM80)
+
+```cpp
+// Async global to shared copy
+SM80_CP_ASYNC_CACHEALWAYS<uint128_t>  // 16-byte async copy
+SM80_CP_ASYNC_CACHEGLOBAL<uint128_t>  // 16-byte with cache hint
+
+// LDG (load global)
+SM50_U32x1_LDSM_N                      // Scalar load
+SM50_U32x2_LDSM_N                      // Vectorized load
+SM50_U32x4_LDSM_N                      // 16-byte vectorized load
+```
+
+### Hopper (SM90)
+
+```cpp
+// Tensor Memory Accelerator (TMA)
+SM90_TMA_LOAD                          // TMA load
+SM90_TMA_LOAD_MULTICAST                // TMA multicast load
+SM90_TMA_STORE                         // TMA store
+
+// Bulk async copy
+SM90_BULK_COPY_AUTO                    // Automatic bulk copy
+SM90_BULK_COPY_G2S                     // Global to shared
+```
+
+## Factory Functions
+
+### make_tiled_copy()
+
+```cpp
+template <class Copy_Atom,
+          class LayoutCopy_TV,
+          class ShapeTiler_MN>
+CUTE_HOST_DEVICE constexpr auto
+make_tiled_copy(Copy_Atom const& copy_atom,
+                LayoutCopy_TV const& layout_tv,
+                ShapeTiler_MN const& tiler_mn);
+```
+
+Creates a TiledCopy from a copy atom, thread-value layout, and tiler shape.
+
+**Parameters:**
+- `copy_atom`: The atomic copy operation
+- `layout_tv`: (thread, value) layout
+- `tiler_mn`: Shape to tile in (M, N) dimensions
+
+**Example:**
+```cpp
+using namespace cute;
+
+// 16-byte vectorized copy
+using Copy_Atom = Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, half_t>;
+
+// 128 threads, each copies 8 values
+auto layout_tv = make_layout(
+  make_shape(Int<128>{}, Int<8>{}),
+  make_stride(Int<8>{}, Int<1>{})
+);
+
+// Tile a 128x128 region
+auto tiled_copy = make_tiled_copy(
+  Copy_Atom{},
+  layout_tv,
+  make_shape(Int<128>{}, Int<128>{})
+);
+```
+
+## Usage Examples
+
+### Basic TiledCopy Setup
+
+```cpp
+#include <cute/tensor.hpp>
+#include <cute/atom/copy_atom.hpp>
+
+using namespace cute;
+
+// Define copy atom for vectorized loads
+using Copy_Atom = Copy_Atom<
+  SM80_CP_ASYNC_CACHEALWAYS<uint128_t>,
+  half_t
+>;
+
+// Create thread-value layout
+auto layout_tv = make_layout(
+  make_shape(Int<128>{}, Int<8>{})
+);
+
+// Create tiled copy
+auto tiled_copy = make_tiled_copy(
+  Copy_Atom{},
+  layout_tv,
+  make_shape(Int<128>{}, Int<128>{})
+);
+
+// Get per-thread copy
+int tid = threadIdx.x;
+auto thr_copy = tiled_copy.get_slice(tid);
+```
+
+### Global to Shared Memory Copy
+
+```cpp
+__device__ void g2s_copy_example(
+  half_t* gmem_ptr,
+  half_t* smem_ptr,
+  int M, int K)
+{
+  // Create tensors
+  auto gmem = make_tensor(gmem_ptr, make_shape(M, K));
+  auto smem = make_tensor(make_smem_ptr(smem_ptr), make_shape(M, K));
+  
+  // Setup TiledCopy
+  using Copy_Atom = Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, half_t>;
+  auto tiled_copy = make_tiled_copy(
+    Copy_Atom{},
+    make_layout(make_shape(Int<128>{}, Int<8>{})),
+    make_shape(M, K)
+  );
+  
+  // Get per-thread copy
+  auto thr_copy = tiled_copy.get_slice(threadIdx.x);
+  
+  // Partition tensors
+  auto thr_gmem = thr_copy.partition_S(gmem);
+  auto thr_smem = thr_copy.partition_D(smem);
+  
+  // Perform async copy
+  copy(tiled_copy, thr_gmem, thr_smem);
+  
+  // Wait for completion
+  cp_async_fence();
+  cp_async_wait<0>();
+}
+```
+
+### Shared to Register Copy
+
+```cpp
+__device__ void s2r_copy_example(
+  half_t* smem_ptr,
+  int M, int K)
+{
+  // Shared memory tensor
+  auto smem = make_tensor(make_smem_ptr(smem_ptr), make_shape(M, K));
+  
+  // Setup TiledCopy for LDS (shared to register)
+  using Copy_Atom = Copy_Atom<SM75_U32x4_LDSM_N, half_t>;
+  auto tiled_copy = make_tiled_copy(
+    Copy_Atom{},
+    make_layout(make_shape(Int<32>{}, Int<8>{})),
+    make_shape(M, K)
+  );
+  
+  // Get per-thread copy
+  auto thr_copy = tiled_copy.get_slice(threadIdx.x);
+  auto thr_smem = thr_copy.partition_S(smem);
+  
+  // Create register fragment
+  auto fragment = make_fragment_like(thr_smem);
+  
+  // Copy to registers
+  copy(tiled_copy, thr_smem, fragment);
+}
+```
+
+### Multi-Stage Pipeline with TiledCopy
+
+```cpp
+template <int NUM_STAGES>
+__device__ void pipeline_copy(
+  half_t* gmem_A, half_t* gmem_B,
+  half_t* smem_A, half_t* smem_B,
+  int M, int N, int K)
+{
+  // Setup tensors
+  auto gA = make_tensor(gmem_A, make_shape(M, K));
+  auto gB = make_tensor(gmem_B, make_shape(N, K));
+  
+  // Multi-stage shared memory
+  auto sA_stages = make_tensor(
+    make_smem_ptr(smem_A),
+    make_shape(M, K, Int<NUM_STAGES>{})
+  );
+  auto sB_stages = make_tensor(
+    make_smem_ptr(smem_B),
+    make_shape(N, K, Int<NUM_STAGES>{})
+  );
+  
+  // Setup TiledCopy
+  using Copy_Atom = Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, half_t>;
+  auto tiled_copy = make_tiled_copy(
+    Copy_Atom{},
+    make_layout(make_shape(Int<128>{}, Int<8>{})),
+    make_shape(M, K)
+  );
+  
+  auto thr_copy = tiled_copy.get_slice(threadIdx.x);
+  
+  // Partition
+  auto thr_gA = thr_copy.partition_S(gA);
+  auto thr_gB = thr_copy.partition_S(gB);
+  auto thr_sA = thr_copy.partition_D(sA_stages);
+  auto thr_sB = thr_copy.partition_D(sB_stages);
+  
+  // Prefetch first NUM_STAGES-1 tiles
+  for (int stage = 0; stage < NUM_STAGES-1; ++stage) {
+    copy(tiled_copy, thr_gA(_, _, stage), thr_sA(_, _, stage));
+    copy(tiled_copy, thr_gB(_, _, stage), thr_sB(_, _, stage));
+    cp_async_fence();
+  }
+  
+  // Main loop with rotating stages
+  int num_tiles = K / TILE_K;
+  for (int tile = 0; tile < num_tiles; ++tile) {
+    int read_stage = tile % NUM_STAGES;
+    int write_stage = (tile + NUM_STAGES - 1) % NUM_STAGES;
+    
+    // Wait for current stage
+    cp_async_wait<NUM_STAGES-2>();
+    __syncthreads();
+    
+    // Compute with read_stage data
+    // ...
+    
+    // Issue next copy into write_stage
+    if (tile + NUM_STAGES - 1 < num_tiles) {
+      copy(tiled_copy, thr_gA(_, _, write_stage), thr_sA(_, _, write_stage));
+      copy(tiled_copy, thr_gB(_, _, write_stage), thr_sB(_, _, write_stage));
+      cp_async_fence();
+    }
+  }
+}
+```
+
+### TMA Copy (Hopper SM90)
+
+```cpp
+__device__ void tma_copy_example(
+  half_t* gmem_ptr,
+  half_t* smem_ptr,
+  int M, int K)
+{
+  // Setup tensors
+  auto gmem = make_tensor(gmem_ptr, make_shape(M, K));
+  auto smem = make_tensor(make_smem_ptr(smem_ptr), make_shape(M, K));
+  
+  // TMA requires special setup with descriptor
+  // TMA copy atom
+  using Copy_Atom = Copy_Atom<SM90_TMA_LOAD, half_t>;
+  
+  // TiledCopy with TMA
+  auto tiled_copy = make_tiled_copy(
+    Copy_Atom{},
+    make_layout(make_shape(Int<1>{}, Int<128>{})),  // TMA is 1 thread
+    make_shape(M, K)
+  );
+  
+  // Only one thread issues TMA
+  if (threadIdx.x == 0) {
+    auto thr_copy = tiled_copy.get_slice(0);
+    auto thr_gmem = thr_copy.partition_S(gmem);
+    auto thr_smem = thr_copy.partition_D(smem);
+    
+    // TMA copy (async)
+    copy(tiled_copy, thr_gmem, thr_smem);
+  }
+  
+  // Arrive-wait barrier
+  __syncthreads();
+}
+```
+
+### Custom Copy Pattern
+
+```cpp
+// Create a custom interleaved copy pattern
+auto custom_layout = make_layout(
+  make_shape(Int<128>{}, Int<8>{}),
+  make_stride(Int<8>{}, Int<1>{})  // Threads interleaved
+);
+
+using Copy_Atom = Copy_Atom<UniversalCopy<half_t>, half_t>;
+auto tiled_copy = make_tiled_copy(
+  Copy_Atom{},
+  custom_layout,
+  make_shape(Int<128>{}, Int<128>{})
+);
+```
+
+## See Also
+
+- [cute::Tensor](/api/cute/tensor) - Tensor type used with TiledCopy
+- [cute::Layout](/api/cute/layout) - Layout fundamentals
+- [cute::TiledMma](/api/cute/tiled-mma) - Tiled matrix multiply operations

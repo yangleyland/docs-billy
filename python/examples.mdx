@@ -1,0 +1,589 @@
+---
+title: "Python Examples"
+description: "Explore CUTLASS Python examples including CuTe DSL kernels and Jupyter notebooks"
+---
+
+Explore a comprehensive collection of examples demonstrating CUTLASS Python capabilities, from basic operations to advanced GPU kernels.
+
+## Example Categories
+
+<CardGroup cols={2}>
+  <Card title="Ampere Examples" icon="microchip">
+    Kernels for NVIDIA Ampere architecture (SM80)
+  </Card>
+  <Card title="Hopper Examples" icon="microchip">
+    Advanced kernels using Hopper features (SM90)
+  </Card>
+  <Card title="Blackwell Examples" icon="microchip">
+    Latest kernels for Blackwell architecture
+  </Card>
+  <Card title="Jupyter Notebooks" icon="book">
+    Interactive tutorials and guides
+  </Card>
+</CardGroup>
+
+## Ampere Examples (SM80)
+
+### Elementwise Addition
+
+Basic example demonstrating CuTe DSL fundamentals.
+
+<Tabs>
+  <Tab title="Code">
+    ```python
+    import cutlass
+    import cutlass.cute as cute
+    from cutlass.cute.runtime import from_dlpack
+    import torch
+    
+    @cute.kernel
+    def elementwise_add_kernel(
+        gA: cute.Tensor,
+        gB: cute.Tensor,
+        gC: cute.Tensor,
+        thr_layout: cute.Layout,
+        val_layout: cute.Layout
+    ):
+        tidx, _, _ = cute.arch.thread_idx()
+        bidx, _, _ = cute.arch.block_idx()
+        
+        # Slice for this thread block
+        blkA = gA[((None, None), bidx)]
+        blkB = gB[((None, None), bidx)]
+        blkC = gC[((None, None), bidx)]
+        
+        # Create copy operations
+        copy_atom = cute.make_copy_atom(
+            cute.nvgpu.CopyUniversalOp(), gA.element_type
+        )
+        tiled_copy = cute.make_tiled_copy_tv(
+            copy_atom, thr_layout, val_layout
+        )
+        
+        # Get thread slice
+        thr_copy = tiled_copy.get_slice(tidx)
+        thrA = thr_copy.partition_S(blkA)
+        thrB = thr_copy.partition_S(blkB)
+        thrC = thr_copy.partition_D(blkC)
+        
+        # Allocate fragments
+        frgA = cute.make_fragment_like(thrA)
+        frgB = cute.make_fragment_like(thrB)
+        frgC = cute.make_fragment_like(thrC)
+        
+        # Load, compute, store
+        cute.copy(copy_atom, thrA, frgA)
+        cute.copy(copy_atom, thrB, frgB)
+        result = frgA.load() + frgB.load()
+        frgC.store(result)
+        cute.copy(copy_atom, frgC, thrC)
+    
+    @cute.jit
+    def elementwise_add(mA, mB, mC):
+        thr_layout = cute.make_ordered_layout((4, 32), order=(1, 0))
+        val_layout = cute.make_ordered_layout((4, 4), order=(1, 0))
+        tiler_mn, tv_layout = cute.make_layout_tv(thr_layout, val_layout)
+        
+        gA = cute.zipped_divide(mA, tiler_mn)
+        gB = cute.zipped_divide(mB, tiler_mn)
+        gC = cute.zipped_divide(mC, tiler_mn)
+        
+        elementwise_add_kernel(gA, gB, gC, thr_layout, val_layout).launch(
+            grid=[cute.size(gC, mode=[1]), 1, 1],
+            block=[cute.size(tv_layout, mode=[0]), 1, 1]
+        )
+    
+    # Usage
+    A = torch.randn(1024, 1024, device='cuda', dtype=torch.float32)
+    B = torch.randn(1024, 1024, device='cuda', dtype=torch.float32)
+    C = torch.zeros(1024, 1024, device='cuda', dtype=torch.float32)
+    
+    mA = from_dlpack(A).mark_layout_dynamic()
+    mB = from_dlpack(B).mark_layout_dynamic()
+    mC = from_dlpack(C).mark_layout_dynamic()
+    
+    compiled = cute.compile(elementwise_add, mA, mB, mC)
+    compiled(mA, mB, mC)
+    
+    print(f"Success! Result[:3,:3]: {C[:3,:3]}")
+    ```
+  </Tab>
+  
+  <Tab title="Run">
+    ```bash
+    # Basic execution
+    python examples/python/CuTeDSL/ampere/elementwise_add.py \
+      --M 1024 --N 1024
+    
+    # Benchmark mode
+    python examples/python/CuTeDSL/ampere/elementwise_add.py \
+      --M 2048 --N 2048 \
+      --benchmark \
+      --warmup_iterations 10 \
+      --iterations 1000
+    
+    # Profile with NCU
+    ncu --set full python examples/python/CuTeDSL/ampere/elementwise_add.py \
+      --M 2048 --N 2048 \
+      --benchmark \
+      --iterations 10 \
+      --skip_ref_check
+    ```
+  </Tab>
+  
+  <Tab title="Concepts">
+    **Key Concepts Demonstrated:**
+    
+    - `@cute.kernel` decorator for GPU kernels
+    - Thread-value (TV) layouts for data partitioning
+    - Tiled copy operations
+    - Register fragments for gmem ↔ rmem transfers
+    - Predication for bounds checking
+    - JIT compilation with `cute.compile`
+  </Tab>
+</Tabs>
+
+### SIMT GEMM (FP32)
+
+Dense matrix multiplication using floating-point units.
+
+```python
+import cutlass
+import cutlass.cute as cute
+import cutlass.pipeline as pipeline
+import torch
+from typing import Tuple
+
+class SGemm:
+    def __init__(
+        self,
+        cta_tiler: Tuple[int, int, int] = (128, 128, 8),
+        num_stages: int = 3,
+        num_threads: int = 256
+    ):
+        self._cta_tiler = cta_tiler
+        self._num_stages = num_stages
+        self._num_threads = num_threads
+        self._bM, self._bN, self._bK = cta_tiler
+    
+    @cute.jit
+    def __call__(self, mA: cute.Tensor, mB: cute.Tensor, mC: cute.Tensor):
+        # Setup shared memory layouts with padding
+        padding_a = 4 if self.a_major == "k" else 0
+        sA_layout = cute.make_layout(
+            (self._bM, self._bK, self._num_stages),
+            stride=(1, self._bM + padding_a, self._bK * (self._bM + padding_a))
+        )
+        # Similar for sB...
+        
+        # Create MMA operation
+        op = cute.nvgpu.MmaUniversalOp(cutlass.Float32)
+        atoms_layout = cute.make_layout((16, 16, 1), stride=(16, 1, 0))
+        tiled_mma = cute.make_tiled_mma(op, atoms_layout)
+        
+        # Calculate grid
+        grid_m = (cute.size(mA, mode=[0]) + self._bM - 1) // self._bM
+        grid_n = (cute.size(mB, mode=[0]) + self._bN - 1) // self._bN
+        
+        self.kernel(mA, mB, mC, sA_layout, sB_layout, tiled_mma).launch(
+            grid=[grid_m, grid_n, 1],
+            block=[self._num_threads, 1, 1]
+        )
+    
+    @cute.kernel
+    def kernel(self, mA, mB, mC, sA_layout, sB_layout, tiled_mma):
+        # Multi-stage pipeline with prefetching
+        # See full example in examples/python/CuTeDSL/ampere/sgemm.py
+        pass
+
+# Usage
+M, N, K = 8192, 8192, 8192
+A = torch.randn(M, K, device='cuda', dtype=torch.float32)
+B = torch.randn(N, K, device='cuda', dtype=torch.float32)
+C = torch.zeros(M, N, device='cuda', dtype=torch.float32)
+
+gemm = SGemm(cta_tiler=(128, 128, 8), num_stages=3)
+compiled = cute.compile(gemm, from_dlpack(A), from_dlpack(B), from_dlpack(C))
+compiled(from_dlpack(A), from_dlpack(B), from_dlpack(C))
+```
+
+**Features:**
+- 3-stage software pipeline (overlaps gmem→smem with compute)
+- 2-stage register pipeline (overlaps smem→rmem with compute)
+- Shared memory padding to avoid bank conflicts
+- Vectorized memory accesses (128-bit loads)
+- Predication for irregular tile shapes
+
+**Run:**
+```bash
+python examples/python/CuTeDSL/ampere/sgemm.py \
+  --mnk 8192,8192,8192 \
+  --a_major m --b_major n --c_major n
+```
+
+### TensorOp GEMM (FP16)
+
+GEMM using Ampere Tensor Cores.
+
+```python
+import cutlass
+import cutlass.cute as cute
+
+class TensorOpGemm:
+    def __init__(
+        self,
+        cta_tiler=(128, 128, 32),
+        atom_layout_mnk=(2, 2, 1)
+    ):
+        self.cta_tiler = cta_tiler
+        self.atom_layout = atom_layout_mnk
+    
+    @cute.jit
+    def __call__(self, mA, mB, mC):
+        # Use Ampere's m16n8k16 Tensor Core instruction
+        mma_op = cute.nvgpu.MmaOp.M16N8K16_F16F16F32F16_TN()
+        
+        # Tile the MMA across the CTA
+        atoms_layout = cute.make_layout(
+            self.atom_layout,
+            # Strides depend on atom shape
+        )
+        tiled_mma = cute.make_tiled_mma(mma_op, atoms_layout)
+        
+        # Launch kernel
+        self.kernel(mA, mB, mC, tiled_mma).launch(...)
+    
+    @cute.kernel  
+    def kernel(self, mA, mB, mC, tiled_mma):
+        # Allocate shared memory for A, B with swizzling
+        # Multi-stage pipeline
+        # Tensor Core MMAs
+        # Epilogue with tiled stores
+        pass
+```
+
+**Run:**
+```bash
+python examples/python/CuTeDSL/ampere/tensorop_gemm.py \
+  --mnkl 8192,8192,8192,1 \
+  --atom_layout_mnk 2,2,1 \
+  --ab_dtype Float16 \
+  --c_dtype Float16 \
+  --acc_dtype Float32
+```
+
+### Flash Attention v2
+
+Fused multi-head attention with tiling for memory efficiency.
+
+```python
+import cutlass.cute as cute
+
+@cute.kernel
+def flash_attention_kernel(
+    Q: cute.Tensor,  # [batch, heads, seq_q, head_dim]
+    K: cute.Tensor,  # [batch, heads, seq_kv, head_dim]
+    V: cute.Tensor,  # [batch, heads, seq_kv, head_dim]
+    O: cute.Tensor,  # [batch, heads, seq_q, head_dim]
+    scale: float
+):
+    # Tile Q, K, V across blocks
+    # Online softmax with running max/sum
+    # Fused QK^T matmul, softmax, and matmul with V
+    # No intermediate storage of attention matrix
+    pass
+```
+
+**Features:**
+- Online softmax computation (no materializing attention matrix)
+- Tiling for long sequences
+- Shared memory management
+- Causal masking support
+
+**Run:**
+```bash
+python examples/python/CuTeDSL/ampere/flash_attention_v2.py \
+  --batch 2 --heads 8 --seq_len 2048 --head_dim 64
+```
+
+## Hopper Examples (SM90)
+
+### TMA GEMM
+
+GEMM using Tensor Memory Accelerator for efficient bulk transfers.
+
+```python
+import cutlass.cute as cute
+import cutlass.cute.nvgpu.tma as tma
+
+# Host: Create TMA descriptors
+tma_load_a = tma.create_tma_descriptor(
+    A_ptr, A_shape, A_stride, tile_shape, dtype
+)
+tma_load_b = tma.create_tma_descriptor(
+    B_ptr, B_shape, B_stride, tile_shape, dtype
+)
+
+@cute.kernel
+def tma_gemm_kernel(gmem_A, gmem_B, gmem_C, tma_desc_a, tma_desc_b):
+    # Leader thread issues TMA loads
+    if cute.arch.thread_idx()[0] == 0:
+        tma.copy_g2s(tma_desc_a, gmem_A, smem_A)
+        tma.copy_g2s(tma_desc_b, gmem_B, smem_B)
+    
+    # Wait for TMA completion
+    cute.arch.syncthreads()
+    
+    # All threads participate in MMA
+    cute.gemm(tiled_mma, acc, smem_A, smem_B, acc)
+    
+    # Store results
+    # ...
+```
+
+**Features:**
+- TMA for high-bandwidth gmem→smem transfers
+- Asynchronous operation
+- Hardware-managed addressing
+- Reduced register pressure
+
+### Warp-Specialized GEMM
+
+Separate producer/consumer warps for maximum throughput.
+
+```python
+@cute.kernel
+def warp_specialized_gemm(...):
+    warp_idx = cute.arch.thread_idx()[0] // 32
+    
+    if warp_idx < num_producer_warps:
+        # Producer warps: load data
+        producer_loop(...)
+    else:
+        # Consumer warps: compute
+        consumer_loop(...)
+```
+
+## Blackwell Examples
+
+### FP16 GEMM Tutorial
+
+Optimized GEMM for Blackwell architecture.
+
+```python
+# From examples/python/CuTeDSL/blackwell/tutorial_gemm/tutorial_fp16_gemm_0.py
+
+@cute.kernel
+def blackwell_gemm_kernel(...):
+    # Use Blackwell-specific features:
+    # - Enhanced Tensor Cores
+    # - Improved TMA
+    # - Advanced scheduling
+    pass
+```
+
+**Run:**
+```bash
+python examples/python/CuTeDSL/blackwell/tutorial_gemm/tutorial_fp16_gemm_0.py
+```
+
+### Blockwise GEMM
+
+Decompose large GEMMs into independent blocks.
+
+```python
+# From examples/python/CuTeDSL/blackwell/blockwise_gemm/
+
+@cute.jit
+def blockwise_gemm(blocks_A, blocks_B, blocks_C):
+    # Launch independent GEMMs for each block
+    for block_idx in range(num_blocks):
+        gemm_kernel(blocks_A[block_idx], blocks_B[block_idx], 
+                   blocks_C[block_idx]).launch(...)
+```
+
+## Jupyter Notebooks
+
+Interactive tutorials available in `examples/python/CuTeDSL/notebooks/`:
+
+<CardGroup cols={2}>
+  <Card title="Hello World">
+    **hello_world.ipynb**
+    
+    Introduction to CuTe DSL basics
+  </Card>
+  
+  <Card title="CuTe Layout Algebra">
+    **cute_layout_algebra.ipynb**
+    
+    Deep dive into layout algebra and composition
+  </Card>
+  
+  <Card title="Tensor Operations">
+    **tensor.ipynb**
+    
+    Working with tensors, indexing, and partitioning
+  </Card>
+  
+  <Card title="Data Types">
+    **data_types.ipynb**
+    
+    Using different numeric types (FP16, FP8, INT8, etc.)
+  </Card>
+  
+  <Card title="Async Pipeline">
+    **async_pipeline.ipynb**
+    
+    Multi-stage pipelines with async copies
+  </Card>
+  
+  <Card title="Autotuning">
+    **benchmark_autotune.ipynb**
+    
+    Automatically find best kernel parameters
+  </Card>
+  
+  <Card title="CUDA Graphs">
+    **cuda_graphs.ipynb**
+    
+    Reduce kernel launch overhead with CUDA graphs
+  </Card>
+  
+  <Card title="Tour to Sol GEMM">
+    **tour_to_sol_gemm.ipynb**
+    
+    Step-by-step GEMM optimization guide
+  </Card>
+</CardGroup>
+
+### Running Notebooks
+
+```bash
+# Launch Jupyter Lab
+cd /path/to/cutlass
+jupyter lab examples/python/CuTeDSL/notebooks
+
+# Or specific notebook
+jupyter notebook examples/python/CuTeDSL/notebooks/hello_world.ipynb
+```
+
+## More Examples
+
+### Advanced Examples
+
+```bash
+examples/python/CuTeDSL/
+├── ampere/
+│   ├── elementwise_add.py          # Basic element-wise ops
+│   ├── elementwise_add_autotune.py # With autotuning
+│   ├── elementwise_apply.py        # Flexible element-wise ops
+│   ├── sgemm.py                    # FP32 SIMT GEMM
+│   ├── tensorop_gemm.py            # FP16 Tensor Core GEMM
+│   ├── flash_attention_v2.py       # Flash Attention
+│   ├── cooperative_launch.py       # Cooperative groups
+│   ├── dynamic_smem_size.py        # Dynamic shared memory
+│   ├── inline_ptx.py               # Inline PTX assembly
+│   └── smem_allocator.py           # Shared memory management
+├── hopper/
+│   ├── tma_gemm.py                 # TMA-accelerated GEMM
+│   ├── warp_specialized_gemm.py    # Producer-consumer warps
+│   └── pingpong_gemm.py            # Ping-pong buffering
+├── blackwell/
+│   ├── tutorial_gemm/              # Step-by-step GEMM tutorials
+│   └── blockwise_gemm/             # Block-wise decomposition
+├── distributed/
+│   └── multi_gpu_gemm.py           # Multi-GPU examples
+├── jax/
+│   └── jax_integration.py          # JAX integration examples
+└── notebooks/                       # Jupyter notebooks
+```
+
+### Framework Integration Examples
+
+#### PyTorch CUDA Extension
+
+```python
+# Export to PyTorch extension
+import cutlass.cute as cute
+import torch.utils.cpp_extension
+
+@cute.jit
+def my_op(x, y):
+    # Kernel implementation
+    pass
+
+# Compile to extension
+compiled = cute.compile(my_op, x, y)
+
+# Export C++ code
+cpp_code = compiled.export_cpp()
+
+# Build PyTorch extension
+ext = torch.utils.cpp_extension.load_inline(
+    name='my_op',
+    cpp_sources=[cpp_code],
+    cuda_sources=[],
+    functions=['my_op']
+)
+```
+
+## Benchmarking
+
+All examples support benchmarking mode:
+
+```bash
+# Basic benchmark
+python example.py --benchmark \
+  --warmup_iterations 10 \
+  --iterations 1000
+
+# With cold L2 cache
+python example.py --benchmark \
+  --use_cold_l2 \
+  --iterations 1000
+
+# Skip correctness check
+python example.py --benchmark \
+  --skip_ref_check \
+  --iterations 1000
+```
+
+## Profiling
+
+### NCU (NVIDIA Compute Profiler)
+
+```bash
+# Full metrics
+ncu --set full python example.py --iterations 10 --skip_ref_check
+
+# Specific metrics
+ncu --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed \
+    --metrics dram__throughput.avg.pct_of_peak_sustained_elapsed \
+    python example.py
+
+# Generate report
+ncu --set full -o profile_report python example.py
+```
+
+### NSight Systems
+
+```bash
+nsys profile --stats=true python example.py
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CuTe DSL Guide" icon="code" href="/python/cute-dsl">
+    Learn CuTe DSL concepts in depth
+  </Card>
+  <Card title="PyTorch Integration" icon="link" href="/python/pytorch-integration">
+    Integrate kernels with PyTorch
+  </Card>
+  <Card title="GitHub Repository" icon="github">
+    [Browse all examples](https://github.com/NVIDIA/cutlass/tree/main/examples/python)
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/python/quickstart">
+    Get started quickly
+  </Card>
+</CardGroup>

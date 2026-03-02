@@ -1,0 +1,196 @@
+---
+title: Architecture Support Overview
+description: Overview of NVIDIA GPU architectures supported by CUTLASS
+---
+
+CUTLASS provides comprehensive support for NVIDIA GPU architectures from Volta through Blackwell, with optimized implementations for each generation's unique features.
+
+## Supported Architectures
+
+CUTLASS supports the following NVIDIA GPU architectures:
+
+| Architecture | Compute Capability | Key Features | CUTLASS Support |
+|--------------|-------------------|--------------|------------------|
+| **Volta** | SM70, SM72 | First-gen Tensor Cores | Basic tensor ops |
+| **Turing** | SM75 | Enhanced Tensor Cores | INT8/INT4 operations |
+| **Ampere** | SM80, SM86 | TF32, BF16, async copy | Full tensor core suite |
+| **Ada** | SM89 | FP8 support | FP8 tensor operations |
+| **Hopper** | SM90 | WGMMA, TMA, FP8 | Warpgroup operations |
+| **Blackwell** | SM100, SM103, SM120 | UMMA, TMEM, enhanced FP8 | Next-gen operations |
+
+<Note>
+CUTLASS requires **CUDA 11.4** or later, with **CUDA 12.8** recommended for best performance. Volta architecture (SM70) is the minimum supported compute capability.
+</Note>
+
+## Architecture-Specific Features
+
+### Data Type Support by Architecture
+
+```cpp
+// From include/cutlass/arch/arch.h
+struct Sm80 {
+  static int const kMinComputeCapability = 80;
+};
+
+struct Sm90 {
+  static int const kMinComputeCapability = 90;
+};
+
+struct Sm100 {
+  static int const kMinComputeCapability = 100;
+};
+```
+
+### Tensor Core Evolution
+
+**Ampere (SM80/86)**
+- TF32 (TensorFloat-32) for FP32 acceleration
+- BF16 (BFloat16) native support
+- FP64 tensor cores
+- Asynchronous copy (`cp.async`)
+- INT8/INT4/INT1 operations
+
+**Hopper (SM90)**
+- Warpgroup Matrix Multiply-Accumulate (WGMMA)
+- Tensor Memory Accelerator (TMA)
+- FP8 (E4M3, E5M2) native support
+- Enhanced FP64 tensor cores
+- Thread block clusters
+
+**Blackwell (SM100/103/120)**
+- Universal Matrix Multiply-Accumulate (UMMA)
+- Tensor Memory (TMEM)
+- Block-scaled data types (FP4, MXFP4/6/8)
+- Enhanced sparse operations
+- Advanced scheduling primitives
+
+## Memory Hierarchy
+
+Different architectures provide different shared memory capacities:
+
+```cpp
+// From include/cutlass/arch/arch.h
+namespace cutlass::arch {
+  constexpr int sm100_smem_capacity_bytes = 232448;  // 227 KB
+  constexpr int sm120_smem_capacity_bytes = 101376;  // 99 KB
+}
+```
+
+<Warning>
+Shared memory allocation must be carefully managed, especially on architectures with limited capacity. Use dynamic shared memory or optimize tile sizes accordingly.
+</Warning>
+
+## Target Architecture Compilation
+
+### Architecture-Accelerated Features
+
+Starting with CUDA 12.0, certain Hopper and Blackwell features require architecture-accelerated PTX, indicated by the "a" suffix:
+
+```bash
+# For Hopper GH100 (required for WGMMA, TMA)
+cmake .. -DCUTLASS_NVCC_ARCHS="90a"
+
+# For Blackwell datacenter GPUs
+cmake .. -DCUTLASS_NVCC_ARCHS="100a"
+
+# For Blackwell GeForce RTX 50 series
+cmake .. -DCUTLASS_NVCC_ARCHS="120"
+```
+
+<Note>
+Kernels compiled with `sm_100a` (datacenter) are **not compatible** with RTX 50 series GPUs (SM120). They require separate compilation targets.
+</Note>
+
+## Checking Architecture at Runtime
+
+CUTLASS provides utilities to query the current architecture:
+
+```cpp
+#include "cutlass/arch/arch.h"
+
+// Get lane ID within a warp
+CUTLASS_DEVICE int lane_id = cutlass::arch::LaneId();
+
+// Get SM number
+CUTLASS_DEVICE int sm_id = cutlass::arch::SmId();
+
+// Architecture tags for template specialization
+using ArchTag = cutlass::arch::Sm80;  // or Sm90, Sm100
+```
+
+## Architecture Selection in Templates
+
+CUTLASS uses architecture tags to specialize templates:
+
+```cpp
+// Example from include/cutlass/arch/mma_sm80.h
+template <>
+struct Mma<
+  gemm::GemmShape<16, 8, 8>,
+  32,
+  bfloat16_t,
+  layout::RowMajor,
+  bfloat16_t,
+  layout::ColumnMajor,
+  float,
+  layout::RowMajor,
+  OpMultiplyAdd> {
+  
+  using ArchTag = arch::Sm80;  // Specifies architecture requirement
+  
+  // ... implementation
+};
+```
+
+## Performance Characteristics
+
+Each architecture has different peak theoretical performance:
+
+- **Ampere A100**: Up to 312 TFLOPS (FP16 Tensor Core)
+- **Hopper H100**: Up to 1,979 TFLOPS (FP8 Tensor Core)
+- **Blackwell B200**: Enhanced performance with UMMA instructions
+
+CUTLASS achieves near-optimal utilization on all supported architectures when properly configured.
+
+## Compiler Preprocessor Macros
+
+Architecture-specific code uses compile-time guards:
+
+```cpp
+// Ampere
+#if defined(CUTLASS_ARCH_MMA_SM80_ENABLED)
+  // Ampere-specific code
+#endif
+
+// Hopper
+#if defined(CUTE_ARCH_MMA_SM90A_ENABLED)
+  // Hopper WGMMA code
+#endif
+
+// Blackwell
+#if defined(CUTE_ARCH_FFMA2_SM100_ENABLED)
+  // Blackwell UMMA code
+#endif
+```
+
+## Next Steps
+
+Explore architecture-specific features:
+
+<CardGroup cols={3}>
+  <Card title="Ampere (SM80/86)" icon="microchip" href="/architectures/ampere">
+    TF32, BF16, async copy operations
+  </Card>
+  <Card title="Hopper (SM90)" icon="microchip" href="/architectures/hopper">
+    WGMMA, TMA, FP8 support
+  </Card>
+  <Card title="Blackwell (SM100/120)" icon="microchip" href="/architectures/blackwell">
+    UMMA, TMEM, block-scaled types
+  </Card>
+</CardGroup>
+
+## Additional Resources
+
+- [CUTLASS Functionality Guide](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/functionality.html)
+- [CUDA Programming Guide - Compute Capabilities](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capabilities)
+- [Hardware Compatibility Table](/README.md#hardware)

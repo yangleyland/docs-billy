@@ -1,0 +1,156 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "CUTLASS",
+  "theme": "aspen",
+  "colors": {
+    "primary": "#76B900",
+    "light": "#A0D911",
+    "dark": "#5A8F00"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/NVIDIA/cutlass"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/NVIDIA/cutlass"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/gemm",
+              "concepts/cute",
+              "concepts/tensor-cores",
+              "concepts/layouts"
+            ]
+          },
+          {
+            "group": "C++ API",
+            "pages": [
+              "cpp/overview",
+              "cpp/gemm-api",
+              "cpp/cute-library",
+              "cpp/epilogue",
+              "cpp/convolution"
+            ]
+          },
+          {
+            "group": "Python DSL",
+            "pages": [
+              "python/overview",
+              "python/quickstart",
+              "python/cute-dsl",
+              "python/examples",
+              "python/pytorch-integration"
+            ]
+          },
+          {
+            "group": "Architecture Support",
+            "pages": [
+              "architectures/overview",
+              "architectures/ampere",
+              "architectures/hopper",
+              "architectures/blackwell"
+            ]
+          },
+          {
+            "group": "Performance",
+            "pages": [
+              "performance/profiling",
+              "performance/optimization",
+              "performance/benchmarks"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "C++ Templates",
+            "pages": [
+              "api/cpp/gemm",
+              "api/cpp/tensor-ref",
+              "api/cpp/layouts",
+              "api/cpp/array",
+              "api/cpp/epilogue-operators"
+            ]
+          },
+          {
+            "group": "CuTe Library",
+            "pages": [
+              "api/cute/layout",
+              "api/cute/tensor",
+              "api/cute/tiled-mma",
+              "api/cute/tiled-copy"
+            ]
+          },
+          {
+            "group": "Python API",
+            "pages": [
+              "api/python/operations",
+              "api/python/gemm",
+              "api/python/layout-types",
+              "api/python/utilities"
+            ]
+          },
+          {
+            "group": "CuTe DSL",
+            "pages": [
+              "api/dsl/kernel-definition",
+              "api/dsl/operations",
+              "api/dsl/atoms",
+              "api/dsl/memory-operations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Examples",
+        "groups": [
+          {
+            "group": "C++ Examples",
+            "pages": [
+              "examples/cpp/basic-gemm",
+              "examples/cpp/batched-gemm",
+              "examples/cpp/fused-operations",
+              "examples/cpp/convolution"
+            ]
+          },
+          {
+            "group": "Python Examples",
+            "pages": [
+              "examples/python/gemm-python",
+              "examples/python/grouped-gemm",
+              "examples/python/custom-epilogue"
+            ]
+          },
+          {
+            "group": "CuTe DSL Examples",
+            "pages": [
+              "examples/dsl/gemm-kernel",
+              "examples/dsl/mixed-precision",
+              "examples/dsl/attention"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

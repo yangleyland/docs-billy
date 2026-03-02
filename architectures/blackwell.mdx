@@ -1,0 +1,401 @@
+---
+title: Blackwell Architecture (SM100/120)
+description: CUTLASS support for NVIDIA Blackwell architecture with UMMA and TMEM
+---
+
+The NVIDIA Blackwell architecture represents the latest generation of GPU computing, introducing Universal Matrix Multiply-Accumulate (UMMA) instructions, Tensor Memory (TMEM), and advanced block-scaled data types.
+
+## Supported GPUs
+
+| GPU Model | Compute Capability | Min CUDA Toolkit | Target Arch |
+|-----------|-------------------|------------------|-------------|
+| NVIDIA B200 Tensor Core GPU | 10.0 (SM100) | 12.8 | `sm100a` |
+| NVIDIA B300 Tensor Core GPU | 10.3 (SM103) | 13.0 | `sm100a` |
+| NVIDIA GeForce RTX 50x0 series | 12.0 (SM120) | 12.8 | `sm120` |
+| NVIDIA DGX Spark | 12.1 | 13.0 | `sm120` |
+
+<Warning>
+**Critical Compatibility Note:** Kernels compiled for datacenter Blackwell (SM100/103) with `sm100a` are **NOT compatible** with GeForce RTX 50 series (SM120). These require separate compilation targets:
+
+```bash
+# For datacenter B200/B300
+cmake .. -DCUTLASS_NVCC_ARCHS="100a"
+
+# For GeForce RTX 50 series
+cmake .. -DCUTLASS_NVCC_ARCHS="120"
+```
+</Warning>
+
+## Key Features
+
+### 1. Universal Matrix Multiply-Accumulate (UMMA)
+
+UMMA represents a simplified and more efficient matrix multiply instruction:
+
+```cpp
+// From include/cute/arch/mma_sm100.hpp
+namespace cute {
+
+struct SM100_2x1x1_F32F32F32F32 {
+  using DRegisters = float2[1];
+  using ARegisters = float2[1];
+  using BRegisters = float[1];
+  using CRegisters = float2[1];
+  
+  CUTE_HOST_DEVICE static void
+  fma(float2       &  d01,
+      float2  const&  a01,
+      float   const&  b0,
+      float2  const&  c01) {
+#if defined(CUTE_ARCH_FFMA2_SM100_ENABLED)
+    // SIMD-style fused multiply-add for 2 FP32 elements
+    cute::fma(d01, a01, make_float2(b0, b0), c01);
+#endif
+  }
+};
+
+struct SM100_1x2x1_F32F32F32F32 {
+  using DRegisters = float2[1];
+  using ARegisters = float[1];
+  using BRegisters = float2[1];
+  using CRegisters = float2[1];
+  
+  CUTE_HOST_DEVICE static void
+  fma(float2       &  d01,
+      float   const&  a0,
+      float2  const&  b01,
+      float2  const&  c01) {
+#if defined(CUTE_ARCH_FFMA2_SM100_ENABLED)
+    cute::fma(d01, make_float2(a0, a0), b01, c01);
+#endif
+  }
+};
+
+} // namespace cute
+```
+
+**UMMA Benefits:**
+- Simplified programming model
+- Improved register efficiency
+- Better compiler optimization opportunities
+- Unified interface across data types
+
+### 2. Tensor Memory (TMEM)
+
+Blackwell introduces dedicated on-chip Tensor Memory for improved data locality:
+
+```cpp
+// From include/cute/arch/tmem_allocator_sm100.hpp
+namespace cute {
+
+// TMEM allocation and management
+struct TMEMAllocator {
+  // Get number of TMEM allocation columns
+  static int get_num_tmem_alloc_cols(int tile_m, int tile_n) {
+    // TMEM allocation is in column units
+    // SM100 supports up to specific capacity
+    return calculate_required_columns(tile_m, tile_n);
+  }
+};
+
+} // namespace cute
+```
+
+**TMEM Characteristics:**
+- Dedicated high-bandwidth memory
+- Optimized for matrix operand storage
+- Reduces shared memory pressure
+- Hardware-managed coherency
+
+### 3. Block-Scaled Data Types
+
+Blackwell supports advanced quantization formats:
+
+#### NVIDIA NVFP4
+
+4-bit floating point with block scaling:
+
+```cpp
+// FP4 x FP4 -> FP32 with block scaling
+using ElementA = cutlass::nvfp4_t;
+using ElementB = cutlass::nvfp4_t;
+using ElementScale = cutlass::half_t;  // 16-bit scale factors
+
+// Each block of FP4 values shares a scale factor
+// Example: 64 FP4 values per scale
+constexpr int kBlockSize = 64;
+```
+
+#### OCP Standard Formats
+
+Support for Open Compute Project microscaling formats:
+
+- **MXFP4**: 4-bit with shared exponent
+- **MXFP6**: 6-bit with shared exponent  
+- **MXFP8**: 8-bit with shared exponent
+
+```cpp
+// MXFP8 example
+using ElementA = cutlass::mxfp8_e4m3_t;
+using ElementB = cutlass::mxfp8_e4m3_t;
+```
+
+### 4. Enhanced FP8 Support
+
+Blackwell improves FP8 tensor operations:
+
+```cpp
+// Batched 3xFP4 blockscaled GEMM (from examples/python/CuTeDSL/blackwell/)
+// Supports dynamic scaling and mixed-precision accumulation
+
+using ElementA = cutlass::float_e4m3_t;
+using ElementB = cutlass::nvfp4_t;  // Mix FP8 and FP4
+using ElementScale = cutlass::half_t;
+using ElementAccumulator = float;
+```
+
+### 5. Sparse Matrix Operations
+
+Enhanced structured sparsity support:
+
+```cpp
+// From include/cute/arch/mma_sm120_sparse.hpp
+// Supports 2:4 and 4:8 structured sparsity patterns
+// with improved metadata handling
+```
+
+## Shared Memory Configuration
+
+Different Blackwell variants have different shared memory capacities:
+
+```cpp
+// From include/cutlass/arch/arch.h
+namespace cutlass::arch {
+  constexpr int sm100_smem_capacity_bytes = 232448;  // 227 KB (datacenter)
+  constexpr int sm120_smem_capacity_bytes = 101376;  // 99 KB (GeForce)
+}
+```
+
+<Info>
+SM100 (datacenter) has significantly more shared memory than SM120 (GeForce). Design kernels to be configurable based on available capacity.
+</Info>
+
+## Instruction Shapes
+
+| Data Type | Instruction Shape | Accumulator | Notes |
+|-----------|------------------|-------------|-------|
+| FP8 (E4M3/E5M2) | Various | FP32 | Enhanced throughput |
+| FP16 | Various | FP16/FP32 | Improved efficiency |
+| BF16 | Various | FP32 | Better numeric stability |
+| FP4 (block-scaled) | Various | FP32 | 3xFP4 mode available |
+| MXFP4/6/8 | Various | FP32 | OCP standard support |
+| INT4 | Various | INT32 | Enhanced sparse support |
+
+## Advanced Scheduling
+
+Blackwell introduces sophisticated kernel scheduling:
+
+```cpp
+// From include/cutlass/gemm/kernel/sm100_gemm_tma_warpspecialized.hpp
+
+// Static scheduling for deterministic performance
+using Scheduler = cutlass::gemm::PersistentScheduler;
+
+// Dynamic scheduling for load balancing
+using Scheduler = cutlass::gemm::DynamicPersistentScheduler;
+
+// Cluster-based scheduling
+using Scheduler = cutlass::gemm::ClusterScheduler<
+  cute::Shape<cute::_2, cute::_2, cute::_1>  // 2x2x1 cluster
+>;
+```
+
+## Pingpong Kernel Pattern
+
+Blackwell supports advanced double-buffering patterns:
+
+```cpp
+// Pingpong pattern for maximum throughput
+template <typename TileShape>
+struct PingpongGemm {
+  // Two sets of buffers in TMEM/SMEM
+  __shared__ ElementA smem_A[2][TileM * TileK];
+  __shared__ ElementB smem_B[2][TileK * TileN];
+  
+  // Alternate between buffers
+  for (int k = 0; k < K; k += TileK) {
+    int buffer_idx = (k / TileK) % 2;
+    
+    // Load next tile while computing current
+    load_tile(smem_A[1 - buffer_idx], smem_B[1 - buffer_idx], k + TileK);
+    compute_tile(smem_A[buffer_idx], smem_B[buffer_idx], accum);
+  }
+};
+```
+
+## Complete Example: Block-Scaled GEMM
+
+```cpp
+#include "cutlass/cutlass.h"
+#include "cutlass/gemm/device/gemm_universal.h"
+#include "cutlass/gemm/collective/sm100_collective.hpp"
+
+// FP4 block-scaled GEMM
+using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
+  cute::Shape<cute::_128, cute::_128, cute::_64>,  // TileShape
+  cutlass::gemm::collective::CollectiveMma<
+    cutlass::gemm::TileScheduler,
+    cute::Shape<cute::_128, cute::_128, cute::_64>,
+    cutlass::nvfp4_t,           // ElementA (4-bit)
+    cutlass::layout::RowMajor,
+    cutlass::nvfp4_t,           // ElementB (4-bit)
+    cutlass::layout::ColumnMajor,
+    float,                       // ElementAccumulator
+    cutlass::half_t,            // ElementScale
+    64,                         // ScaleBlockSize
+    cute::Shape<cute::_2, cute::_1, cute::_1>,  // ClusterShape
+    cutlass::gemm::collective::StageCount<3>,
+    cutlass::gemm::collective::KernelSm100TmaBlockScaled
+  >,
+  cutlass::epilogue::collective::DefaultEpilogue<...>
+>;
+
+using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
+
+int main() {
+  // Allocate matrices and scale factors
+  cutlass::nvfp4_t* A;  // M x K in FP4
+  cutlass::nvfp4_t* B;  // K x N in FP4
+  cutlass::half_t* A_scale;  // (M x K) / 64 scales
+  cutlass::half_t* B_scale;  // (K x N) / 64 scales
+  float* C;  // M x N output
+  
+  Gemm gemm_op;
+  
+  typename Gemm::Arguments args{
+    cutlass::gemm::GemmUniversalMode::kGemm,
+    {M, N, K},
+    {A, lda, A_scale, B, ldb, B_scale},
+    {{alpha, beta}, C, ldc, C, ldc}
+  };
+  
+  cutlass::Status status = gemm_op(args);
+  
+  return status == cutlass::Status::kSuccess ? 0 : -1;
+}
+```
+
+## CuTe DSL Support
+
+Blackwell has extensive CuTe DSL support:
+
+```python
+# From examples/python/CuTeDSL/blackwell/
+import cutlass
+from cutlass import cute
+
+# SM103 batched 3xFP4 blockscaled GEMM
+@cute.kernel
+def fp4_blockscaled_gemm(
+    A: cute.Tensor,         # FP4 input
+    B: cute.Tensor,         # FP4 input  
+    A_scale: cute.Tensor,   # FP16 scales
+    B_scale: cute.Tensor,   # FP16 scales
+    C: cute.Tensor          # FP32 output
+):
+    # Kernel automatically uses UMMA instructions
+    # and TMEM for operand storage
+    pass
+```
+
+## Performance Optimization
+
+### Tile Size Selection
+
+```cpp
+// Recommended for SM100 (datacenter, 227 KB SMEM)
+using TileShape_256x128x64 = cute::Shape<cute::_256, cute::_128, cute::_64>;
+using TileShape_128x256x64 = cute::Shape<cute::_128, cute::_256, cute::_64>;
+
+// Recommended for SM120 (GeForce, 99 KB SMEM)
+using TileShape_128x128x64 = cute::Shape<cute::_128, cute::_128, cute::_64>;
+using TileShape_128x128x32 = cute::Shape<cute::_128, cute::_128, cute::_32>;
+```
+
+### Block Scaling Configuration
+
+```cpp
+// Larger blocks = fewer scales = better performance
+// But may reduce accuracy
+
+constexpr int kScaleBlock_32  = 32;   // High accuracy
+constexpr int kScaleBlock_64  = 64;   // Balanced
+constexpr int kScaleBlock_128 = 128;  // High performance
+```
+
+### TMEM vs Shared Memory
+
+- Use TMEM for matrix operands (A, B)
+- Use shared memory for accumulation and epilogue
+- Balance allocation based on kernel requirements
+
+## Compilation
+
+```bash
+# For datacenter Blackwell (B200, B300)
+nvcc -arch=sm_100a -std=c++17 example.cu -o example
+
+# For GeForce RTX 50 series  
+nvcc -arch=sm_120 -std=c++17 example.cu -o example
+
+# CMake - datacenter
+cmake .. -DCUTLASS_NVCC_ARCHS="100a" -DCUDA_TOOLKIT_ROOT=/usr/local/cuda-13.0
+
+# CMake - GeForce
+cmake .. -DCUTLASS_NVCC_ARCHS="120"
+```
+
+<Note>
+CUDA Toolkit 13.0 or later is required for SM103 (B300) support. CUDA 12.8 or later supports SM100 (B200) and SM120 (RTX 50 series).
+</Note>
+
+## Examples
+
+Blackwell-specific examples:
+
+- `examples/112_blackwell_ssd/` - State Space Decomposition on Blackwell
+- `examples/93_blackwell_low_latency_gqa/` - Low-latency GQA with cluster reduction
+- `examples/python/CuTeDSL/blackwell/sm103_dense_blockscaled_gemm_persistent.py` - Block-scaled GEMM
+- `examples/python/CuTeDSL/blackwell/dense_blockscaled_gemm_persistent.py` - SM100 persistent kernel
+
+## Known Issues and Limitations
+
+<Warning>
+**CUDA Toolkit 13.1 Advanced Control Files:**
+
+Mixed-input GEMM examples use "Advanced control file" for optimal performance. These are experimental compiler settings tuned for specific kernels and CUDA versions. They:
+
+- Only work with the specific kernel they were tuned for
+- Are not compatible across CUDA toolkit versions
+- May not work on different GPU models
+- Require CUDA Toolkit 13.1 for Blackwell
+
+See examples for usage details.
+</Warning>
+
+### SM100 vs SM120 Differences
+
+| Feature | SM100/103 (Datacenter) | SM120 (GeForce) |
+|---------|----------------------|------------------|
+| Shared Memory | 227 KB | 99 KB |
+| TMEM | Full support | Full support |
+| Cluster Size | Up to 16 CTAs | Up to 8 CTAs |
+| Target Arch | `sm100a` | `sm120` |
+| Binary Compatibility | Not compatible → | ← Not compatible |
+
+## See Also
+
+- [Hopper Architecture](/architectures/hopper) - Previous generation
+- [Architecture Overview](/architectures/overview) - All architectures
+- [CuTe DSL Guide](https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/quick_start.html)
+- [CUTLASS 4.4 Changelog](https://docs.nvidia.com/cutlass/latest/CHANGELOG.html)
