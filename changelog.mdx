@@ -4,6 +4,12 @@ description: "Latest updates and releases for CUTLASS"
 rss: true
 ---
 
+<Update label="May 2026" description="v4.2.0" tags={["Blackwell", "CuTe"]}>
+  Added support for Blackwell's fifth-generation Tensor Core wgmma instructions with 2x register file throughput, unlocking FP64 matrix multiply at near-FP32 speeds.
+
+  Introduced CuTe cluster-level collective operations for multi-SM tile reductions, enabling single-kernel AllReduce across up to 16 SMs without global memory round-trips.
+</Update>
+
 <Update label="April 2026" description="v4.1.1" tags={["ASDF", "ASDF"]}>
 	birthday month!!
 </Update>
