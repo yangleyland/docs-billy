@@ -39,17 +39,13 @@
           },
           {
             "group": "C++ API",
-            "pages": [
-              "cpp/gemm-api",
-              "cpp/cute-library",
-              "cpp/epilogue",
-              "cpp/convolution"
-            ]
+            "pages": ["cpp/cute-library", "cpp/epilogue", "cpp/convolution"]
           },
           {
             "group": "Python DSL",
             "pages": [
               "cpp/overview",
+              "cpp/gemm-api",
               "python/overview",
               "python/quickstart",
               "python/cute-dsl",
