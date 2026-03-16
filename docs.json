@@ -25,16 +25,12 @@
         "groups": [
           {
             "group": "Get Started",
-            "pages": [
-              "introduction",
-              "quickstart",
-              "installation",
-              "changelog"
-            ]
+            "pages": ["introduction", "quickstart", "changelog"]
           },
           {
             "group": "Core Concepts",
             "pages": [
+              "installation",
               "concepts/gemm",
               "concepts/cute",
               "concepts/tensor-cores",
