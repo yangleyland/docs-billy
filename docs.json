@@ -40,7 +40,6 @@
           {
             "group": "C++ API",
             "pages": [
-              "cpp/overview",
               "cpp/gemm-api",
               "cpp/cute-library",
               "cpp/epilogue",
@@ -50,6 +49,7 @@
           {
             "group": "Python DSL",
             "pages": [
+              "cpp/overview",
               "python/overview",
               "python/quickstart",
               "python/cute-dsl",
