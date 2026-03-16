@@ -57,7 +57,6 @@
             "pages": [
               "architectures/overview",
               "python/cute-dsl",
-              "architectures/ampere",
               "architectures/blackwell"
             ]
           },
@@ -66,6 +65,7 @@
             "pages": [
               "performance/profiling",
               "performance/optimization",
+              "architectures/ampere",
               "architectures/hopper",
               "performance/benchmarks"
             ]
