@@ -48,7 +48,6 @@
               "cpp/gemm-api",
               "python/overview",
               "python/quickstart",
-              "python/cute-dsl",
               "python/examples",
               "python/pytorch-integration"
             ]
@@ -57,6 +56,7 @@
             "group": "Architecture Support",
             "pages": [
               "architectures/overview",
+              "python/cute-dsl",
               "architectures/ampere",
               "architectures/hopper",
               "architectures/blackwell"
