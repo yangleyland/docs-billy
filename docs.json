@@ -45,7 +45,7 @@
           {
             "group": "Python DSL",
             "pages": [
-              "concepts/layouts"
+              "concepts/layouts",
               "architectures/blackwell",
               "concepts/gemm",
               "cpp/overview",
