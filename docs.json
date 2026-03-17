@@ -43,6 +43,7 @@
           {
             "group": "Python DSL",
             "pages": [
+              "architectures/blackwell",
               "concepts/gemm",
               "cpp/overview",
               "cpp/gemm-api",
@@ -59,7 +60,6 @@
           {
             "group": "Performance",
             "pages": [
-              "architectures/blackwell",
               "performance/profiling",
               "performance/optimization",
               "architectures/ampere",
