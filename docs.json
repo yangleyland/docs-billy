@@ -54,15 +54,12 @@
           },
           {
             "group": "Architecture Support",
-            "pages": [
-              "architectures/overview",
-              "python/cute-dsl",
-              "architectures/blackwell"
-            ]
+            "pages": ["architectures/overview", "python/cute-dsl"]
           },
           {
             "group": "Performance",
             "pages": [
+              "architectures/blackwell",
               "performance/profiling",
               "performance/optimization",
               "architectures/ampere",
