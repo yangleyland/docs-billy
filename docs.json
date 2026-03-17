@@ -31,7 +31,6 @@
             "group": "Core Concepts",
             "pages": [
               "installation",
-              "concepts/gemm",
               "concepts/cute",
               "concepts/tensor-cores",
               "concepts/layouts"
@@ -44,6 +43,7 @@
           {
             "group": "Python DSL",
             "pages": [
+              "concepts/gemm",
               "cpp/overview",
               "cpp/gemm-api",
               "python/overview",
