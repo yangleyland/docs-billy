@@ -28,7 +28,7 @@
             "pages": ["introduction", "quickstart", "changelog"]
           },
           {
-            "group": "Core Concepts",
+            "group": "Bore Concepts",
             "pages": [
               "installation",
               "introduction",
