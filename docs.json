@@ -35,8 +35,7 @@
               "testpage",
               "introduction",
               "concepts/cute",
-              "concepts/tensor-cores",
-              "concepts/layouts"
+              "concepts/tensor-cores"
             ]
           },
           {
@@ -46,6 +45,7 @@
           {
             "group": "Python DSL",
             "pages": [
+              "concepts/layouts"
               "architectures/blackwell",
               "concepts/gemm",
               "cpp/overview",
