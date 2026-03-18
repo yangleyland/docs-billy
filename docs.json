@@ -42,6 +42,7 @@
             "pages": ["cpp/cute-library", "cpp/epilogue", "cpp/convolution"]
           },
           {
+            "hidden": true,
             "group": "Python DSL",
             "pages": [
               "concepts/cute",
