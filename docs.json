@@ -56,7 +56,6 @@
             ]
           },
           {
-            "hidden": true,
             "group": "Architecture Support",
             "pages": ["architectures/overview", "python/cute-dsl"]
           },
