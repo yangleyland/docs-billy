@@ -34,7 +34,6 @@
               "newpage",
               "testpage",
               "introduction",
-              "concepts/cute",
               "concepts/tensor-cores"
             ]
           },
@@ -45,6 +44,7 @@
           {
             "group": "Python DSL",
             "pages": [
+              "concepts/cute",
               "concepts/layouts",
               "architectures/blackwell",
               "concepts/gemm",
