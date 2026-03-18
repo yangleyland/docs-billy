@@ -43,6 +43,7 @@
           },
           {
             "group": "Python DSL",
+            "hidden": true,
             "pages": [
               "concepts/cute",
               "concepts/layouts",
