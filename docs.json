@@ -25,7 +25,7 @@
         "groups": [
           {
             "hidden": true,
-            "group": "Get Started",
+            "group": "Get Startedd",
             "pages": ["introduction", "quickstart", "changelog"]
           },
           {
