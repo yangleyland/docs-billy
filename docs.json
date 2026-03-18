@@ -31,6 +31,7 @@
             "group": "Bore Concepts",
             "pages": [
               "installation",
+              "python/pytorch-integration",
               "newpage",
               "testpage",
               "introduction",
@@ -52,8 +53,7 @@
               "cpp/gemm-api",
               "python/overview",
               "python/quickstart",
-              "python/examples",
-              "python/pytorch-integration"
+              "python/examples"
             ]
           },
           {
