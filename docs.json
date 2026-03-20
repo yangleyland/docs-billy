@@ -21,7 +21,7 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Documentation",
+        "tab": "documentation",
         "groups": [
           {
             "hidden": true,
@@ -31,7 +31,6 @@
           {
             "group": "Bore Concepts",
             "pages": [
-              "installation",
               "newpage",
               "testpage",
               "introduction",
