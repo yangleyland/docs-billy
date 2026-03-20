@@ -24,7 +24,6 @@
         "tab": "documentation",
         "groups": [
           {
-            "hidden": true,
             "group": "Get Startedd",
             "pages": ["introduction", "quickstart", "changelog"]
           },
