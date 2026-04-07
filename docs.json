@@ -18,6 +18,9 @@
       "github": "https://github.com/NVIDIA/cutlass"
     }
   },
+  "seo": {
+    "indexing": "all"
+  },
   "navigation": {
     "tabs": [
       {
