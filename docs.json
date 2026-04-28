@@ -1,151 +1,137 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "name": "CUTLASSaaaa",
-  "theme": "aspen",
+  "theme": "mint",
+  "name": "Mint Starter Kit",
   "colors": {
-    "primary": "#76B900",
-    "light": "#A0D911",
-    "dark": "#5A8F00"
+    "primary": "#16A34A",
+    "light": "#07C983",
+    "dark": "#15803D"
   },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/NVIDIA/cutlass"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/NVIDIA/cutlass"
-    }
-  },
-  "seo": {
-    "indexing": "all"
-  },
+  "favicon": "/favicon.svg",
   "navigation": {
     "tabs": [
       {
-        "tab": "documentation",
+        "tab": "Guides",
         "groups": [
           {
-            "group": "Get Startedd",
-            "pages": ["introduction", "quickstart", "changelog"]
+            "group": "Getting started",
+            "pages": ["index", "quickstart", "development"]
           },
           {
-            "group": "Bore Concepts",
+            "group": "Customization",
+            "pages": ["essentials/settings", "essentials/navigation"]
+          },
+          {
+            "group": "Essentials",
+            "pages": ["essentials/index"]
+          },
+          {
+            "group": "Writing content",
             "pages": [
-              "newpage",
-              "testpage",
-              "introduction",
-              "concepts/tensor-cores"
+              "essentials/markdown",
+              "essentials/code",
+              "essentials/images",
+              "essentials/reusable-snippets"
             ]
           },
           {
-            "group": "C++ API",
-            "pages": ["cpp/cute-library", "cpp/epilogue", "cpp/convolution"]
-          },
-          {
-            "group": "Python DSL",
+            "group": "AI tools",
             "pages": [
-              "concepts/cute",
-              "concepts/layouts",
-              "architectures/blackwell",
-              "concepts/gemm",
-              "cpp/overview",
-              "cpp/gemm-api",
-              "python/overview",
-              "python/quickstart",
-              "python/examples"
-            ]
-          },
-          {
-            "hidden": true,
-            "group": "Architecture Support",
-            "pages": ["architectures/overview", "python/cute-dsl"]
-          },
-          {
-            "group": "Performance",
-            "pages": [
-              "performance/profiling",
-              "performance/optimization",
-              "architectures/ampere",
-              "architectures/hopper",
-              "performance/benchmarks"
+              "ai-tools/cursor",
+              "ai-tools/claude-code",
+              "ai-tools/windsurf"
             ]
           }
         ]
       },
       {
-        "tab": "API Reference",
+        "tab": "API reference",
         "groups": [
           {
-            "group": "C++ Templates",
-            "pages": [
-              "api/cpp/gemm",
-              "api/cpp/tensor-ref",
-              "api/cpp/layouts",
-              "api/cpp/array",
-              "api/cpp/epilogue-operators"
-            ]
+            "group": "API documentation",
+            "pages": ["api-reference/introduction"]
           },
           {
-            "group": "CuTe Library",
+            "group": "Endpoint examples",
             "pages": [
-              "api/cute/layout",
-              "api/cute/tensor",
-              "api/cute/tiled-mma",
-              "api/cute/tiled-copy"
-            ]
-          },
-          {
-            "group": "Python API",
-            "pages": [
-              "api/python/operations",
-              "api/python/gemm",
-              "api/python/layout-types",
-              "api/python/utilities"
-            ]
-          },
-          {
-            "group": "CuTe DSL",
-            "pages": [
-              "api/dsl/kernel-definition",
-              "api/dsl/operations",
-              "api/dsl/atoms",
-              "api/dsl/memory-operations"
+              "api-reference/endpoint/get",
+              "api-reference/endpoint/get-stations",
+              "api-reference/endpoint/create",
+              "api-reference/endpoint/delete",
+              "api-reference/endpoint/webhook"
             ]
           }
         ]
       },
       {
-        "tab": "Examples",
-        "groups": [
-          {
-            "group": "C++ Examples",
-            "pages": [
-              "examples/cpp/basic-gemm",
-              "examples/cpp/batched-gemm",
-              "examples/cpp/fused-operations",
-              "examples/cpp/convolution"
-            ]
-          },
-          {
-            "group": "Python Examples",
-            "pages": [
-              "examples/python/gemm-python",
-              "examples/python/grouped-gemm",
-              "examples/python/custom-epilogue"
-            ]
-          },
-          {
-            "group": "CuTe DSL Examples",
-            "pages": [
-              "examples/dsl/gemm-kernel",
-              "examples/dsl/mixed-precision",
-              "examples/dsl/attention"
-            ]
-          }
-        ]
+        "tab": "Pet Store Reference",
+        "pages": ["api-reference/endpoint/new-fake-get"],
+        "openapi": "https://raw.githubusercontent.com/swagger-api/swagger-petstore/refs/heads/master/src/main/resources/openapi.yaml"
       }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Documentation",
+          "href": "https://mintlify.com/docs",
+          "icon": "book-open-cover"
+        },
+        {
+          "anchor": "Community",
+          "href": "https://mintlify.com/community",
+          "icon": "slack"
+        },
+        {
+          "anchor": "Blog",
+          "href": "https://mintlify.com/blog",
+          "icon": "newspaper"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Support",
+        "href": "mailto:hi@mintlify.com"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Dashboard",
+      "href": "https://dashboard.mintlify.com"
+    }
+  },
+  "api": {
+    "openapi": "https://gist.githubusercontent.com/mayankshouche/c6ee754a80c34c1f9bee1eff776b69ed/raw/39ed2dab8b1f572b707d4a43aca453bf05bca66e/train.json"
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
     ]
-  }
+  },
+  "footer": {
+    "socials": {
+      "x": "https://x.com/mintlify",
+      "github": "https://github.com/mintlify",
+      "linkedin": "https://linkedin.com/company/mintlify"
+    }
+  },
+  "redirects": [
+    {
+      "source": "/beta/:slug*",
+      "destination": "/v2/:slug*"
+    }
+  ]
 }
