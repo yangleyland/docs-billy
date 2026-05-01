@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Mintlify Starter Kit",
   "colors": {
     "primary": "#16A34A",
     "light": "#07C983",
@@ -15,15 +15,18 @@
         "groups": [
           {
             "group": "Getting started",
-            "pages": ["index", "quickstart", "development"]
+            "pages": [
+              "index",
+              "quickstart",
+              "development"
+            ]
           },
           {
             "group": "Customization",
-            "pages": ["essentials/settings", "essentials/navigation"]
-          },
-          {
-            "group": "Essentials",
-            "pages": ["essentials/index"]
+            "pages": [
+              "essentials/settings",
+              "essentials/navigation"
+            ]
           },
           {
             "group": "Writing content",
@@ -31,12 +34,16 @@
               "essentials/markdown",
               "essentials/code",
               "essentials/images",
+              "essentials/components",
               "essentials/reusable-snippets"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Agent ready",
             "pages": [
+              "agent-ready/prompt",
+              "agent-ready/visibility",
+              "agent-ready/contextual",
               "ai-tools/cursor",
               "ai-tools/claude-code",
               "ai-tools/windsurf"
@@ -49,24 +56,20 @@
         "groups": [
           {
             "group": "API documentation",
-            "pages": ["api-reference/introduction"]
+            "pages": [
+              "api-reference/introduction"
+            ]
           },
           {
             "group": "Endpoint examples",
             "pages": [
               "api-reference/endpoint/get",
-              "api-reference/endpoint/get-stations",
               "api-reference/endpoint/create",
               "api-reference/endpoint/delete",
               "api-reference/endpoint/webhook"
             ]
           }
         ]
-      },
-      {
-        "tab": "Pet Store Reference",
-        "pages": ["api-reference/endpoint/new-fake-get"],
-        "openapi": "https://raw.githubusercontent.com/swagger-api/swagger-petstore/refs/heads/master/src/main/resources/openapi.yaml"
       }
     ],
     "global": {
@@ -75,11 +78,6 @@
           "anchor": "Documentation",
           "href": "https://mintlify.com/docs",
           "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Community",
-          "href": "https://mintlify.com/community",
-          "icon": "slack"
         },
         {
           "anchor": "Blog",
@@ -106,20 +104,17 @@
       "href": "https://dashboard.mintlify.com"
     }
   },
-  "api": {
-    "openapi": "https://gist.githubusercontent.com/mayankshouche/c6ee754a80c34c1f9bee1eff776b69ed/raw/39ed2dab8b1f572b707d4a43aca453bf05bca66e/train.json"
-  },
   "contextual": {
     "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
+     "copy",
+     "view",
+     "chatgpt",
+     "claude",
+     "perplexity",
+     "mcp",
+     "cursor",
+     "vscode"
+   ]
   },
   "footer": {
     "socials": {
@@ -127,11 +122,5 @@
       "github": "https://github.com/mintlify",
       "linkedin": "https://linkedin.com/company/mintlify"
     }
-  },
-  "redirects": [
-    {
-      "source": "/beta/:slug*",
-      "destination": "/v2/:slug*"
-    }
-  ]
+  }
 }
