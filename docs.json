@@ -8,6 +8,9 @@
     "dark": "#15803D"
   },
   "favicon": "/favicon.svg",
+  "seo": {
+    "indexing": "all"
+  },
   "navigation": {
     "languages": [
       {
