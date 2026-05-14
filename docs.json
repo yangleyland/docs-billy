@@ -23,8 +23,8 @@
           },
           {
             "group": "Writing content",
+            "root": "essentials/markdown",
             "pages": [
-              "essentials/markdown",
               "essentials/code",
               "essentials/images",
               "essentials/components",
