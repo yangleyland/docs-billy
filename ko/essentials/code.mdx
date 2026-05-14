@@ -1,0 +1,42 @@
+---
+title: "코드 블록"
+description: "한국어 예시 번역 문서입니다"
+icon: 'code'
+---
+
+이 페이지는 한국어 문서 지원을 확인하기 위한 예시 번역입니다. 실제 제품 문구 대신 임의의 한국어 문장을 사용합니다. 설정, 탐색, 코드 예시, API 설명을 한국어 섹션에서 확인할 수 있습니다.
+
+
+## Inline code
+
+To denote a `word` or `phrase` as code, enclose it in backticks (`).
+
+```
+To denote a `word` or `phrase` as code, enclose it in backticks (`).
+```
+
+## Code blocks
+
+Use [fenced code blocks](https://www.markdownguide.org/extended-syntax/#fenced-code-blocks) by enclosing code in three backticks and follow the leading ticks with the programming language of your snippet to get syntax highlighting. Optionally, you can also write the name of your code after the programming language.
+
+```java HelloWorld.java
+class HelloWorld {
+    public static void main(String[] args) {
+        System.out.println("Hello, World!");
+    }
+}
+```
+
+````md
+```java HelloWorld.java
+class HelloWorld {
+    public static void main(String[] args) {
+        System.out.println("Hello, World!");
+    }
+}
+```
+````
+
+## Code groups
+
+To display the same snippet in multiple languages as tabs, use the `CodeGroup` component. See [Components](/ko/essentials/components#code-groups) for usage.

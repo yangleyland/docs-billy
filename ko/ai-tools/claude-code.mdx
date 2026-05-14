@@ -1,0 +1,46 @@
+---
+title: "Claude Code 설정"
+description: "한국어 예시 번역 문서입니다"
+icon: "asterisk"
+---
+
+이 페이지는 한국어 문서 지원을 확인하기 위한 예시 번역입니다. 실제 제품 문구 대신 임의의 한국어 문장을 사용합니다. 설정, 탐색, 코드 예시, API 설명을 한국어 섹션에서 확인할 수 있습니다.
+
+
+Set up Claude Code to help you write and maintain your Mintlify documentation.
+
+## Prerequisites
+
+- Active Claude subscription (Pro, Max, or API access)
+
+## Setup
+
+<Steps>
+<Step title="Install Claude Code">
+  ```bash
+  npm install -g @anthropic-ai/claude-code
+  ```
+</Step>
+
+<Step title="Install the Mintlify skill">
+  In your docs directory, run:
+
+  ```bash
+  npx skills add https://mintlify.com/docs
+  ```
+
+  This gives Claude Code Mintlify's component reference, writing standards,
+  and workflow guidance.
+</Step>
+
+<Step title="Customize project instructions">
+  Edit `AGENTS.md` in your project root to add project-specific terminology,
+  style preferences, and content boundaries.
+</Step>
+
+<Step title="Start writing with Claude Code">
+  ```bash
+  claude
+  ```
+</Step>
+</Steps>

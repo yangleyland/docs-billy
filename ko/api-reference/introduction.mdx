@@ -1,0 +1,36 @@
+---
+title: "API 소개"
+description: "한국어 예시 번역 문서입니다"
+---
+
+이 페이지는 한국어 문서 지원을 확인하기 위한 예시 번역입니다. 실제 제품 문구 대신 임의의 한국어 문장을 사용합니다. 설정, 탐색, 코드 예시, API 설명을 한국어 섹션에서 확인할 수 있습니다.
+
+
+<Note>
+  If you're not looking to build API reference documentation, you can delete
+  this section by removing the api-reference folder.
+</Note>
+
+## Welcome
+
+There are two ways to build API documentation: [OpenAPI](https://mintlify.com/docs/api-playground/openapi/setup) and [MDX components](https://mintlify.com/docs/api-playground/mdx/configuration). For the starter kit, we are using the following OpenAPI specification.
+
+<Card
+  title="Plant Store Endpoints"
+  icon="leaf"
+  href="https://github.com/mintlify/starter/blob/main/api-reference/openapi.json"
+>
+  View the OpenAPI specification file
+</Card>
+
+## Authentication
+
+All API endpoints are authenticated using Bearer tokens and picked up from the specification file.
+
+```json
+"security": [
+  {
+    "bearerAuth": []
+  }
+]
+```

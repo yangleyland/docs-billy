@@ -9,55 +9,136 @@
   },
   "favicon": "/favicon.svg",
   "navigation": {
-    "tabs": [
+    "languages": [
       {
-        "tab": "Guides",
-        "groups": [
+        "language": "en",
+        "default": true,
+        "tabs": [
           {
-            "group": "Getting started",
-            "pages": ["index", "quickstart", "development"]
-          },
-          {
-            "group": "Customization",
-            "pages": ["essentials/settings", "essentials/navigation"]
-          },
-          {
-            "group": "Writing content",
-            "root": "essentials/markdown",
-            "pages": [
-              "essentials/code",
-              "essentials/images",
-              "essentials/components",
-              "essentials/reusable-snippets"
+            "tab": "Guides",
+            "groups": [
+              {
+                "group": "Getting started",
+                "pages": [
+                  "index",
+                  "quickstart",
+                  "development"
+                ]
+              },
+              {
+                "group": "Customization",
+                "pages": [
+                  "essentials/settings",
+                  "essentials/navigation"
+                ]
+              },
+              {
+                "group": "Writing content",
+                "root": "essentials/markdown",
+                "pages": [
+                  "essentials/code",
+                  "essentials/images",
+                  "essentials/components",
+                  "essentials/reusable-snippets"
+                ]
+              },
+              {
+                "group": "Agent ready",
+                "pages": [
+                  "agent-ready/prompt",
+                  "agent-ready/visibility",
+                  "agent-ready/contextual",
+                  "ai-tools/cursor",
+                  "ai-tools/claude-code",
+                  "ai-tools/windsurf"
+                ]
+              }
             ]
           },
           {
-            "group": "Agent ready",
-            "pages": [
-              "agent-ready/prompt",
-              "agent-ready/visibility",
-              "agent-ready/contextual",
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+            "tab": "API reference",
+            "groups": [
+              {
+                "group": "API documentation",
+                "pages": [
+                  "api-reference/introduction"
+                ]
+              },
+              {
+                "group": "Endpoint examples",
+                "pages": [
+                  "api-reference/endpoint/get",
+                  "api-reference/endpoint/create",
+                  "api-reference/endpoint/delete",
+                  "api-reference/endpoint/webhook"
+                ]
+              }
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
-        "groups": [
+        "language": "ko",
+        "tabs": [
           {
-            "group": "API documentation",
-            "pages": ["api-reference/introduction"]
+            "tab": "가이드",
+            "groups": [
+              {
+                "group": "시작하기",
+                "pages": [
+                  "ko/index",
+                  "ko/quickstart",
+                  "ko/development"
+                ]
+              },
+              {
+                "group": "사용자 지정",
+                "pages": [
+                  "ko/essentials/settings",
+                  "ko/essentials/navigation"
+                ]
+              },
+              {
+                "group": "콘텐츠 작성",
+                "root": "ko/essentials/markdown",
+                "pages": [
+                  "ko/essentials/code",
+                  "ko/essentials/images",
+                  "ko/essentials/components",
+                  "ko/essentials/reusable-snippets"
+                ]
+              },
+              {
+                "group": "에이전트 준비",
+                "pages": [
+                  "ko/agent-ready/prompt",
+                  "ko/agent-ready/visibility",
+                  "ko/agent-ready/contextual",
+                  "ko/ai-tools/cursor",
+                  "ko/ai-tools/claude-code",
+                  "ko/ai-tools/windsurf"
+                ]
+              }
+            ]
           },
           {
-            "group": "Endpoint examples",
-            "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+            "tab": "API 참조",
+            "groups": [
+              {
+                "group": "API 문서",
+                "pages": [
+                  "ko/api-reference/introduction"
+                ]
+              },
+              {
+                "group": "엔드포인트 예시",
+                "pages": [
+                  "ko/api-reference/endpoint/get",
+                  "ko/api-reference/endpoint/create",
+                  "ko/api-reference/endpoint/delete",
+                  "ko/api-reference/endpoint/webhook"
+                ]
+              }
             ]
           }
         ]
