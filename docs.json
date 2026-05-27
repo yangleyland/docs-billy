@@ -21,19 +21,13 @@
             "tab": "Guides",
             "groups": [
               {
+                "public": true,
                 "group": "Getting started",
-                "pages": [
-                  "index",
-                  "quickstart",
-                  "development"
-                ]
+                "pages": ["index", "quickstart", "development"]
               },
               {
                 "group": "Customization",
-                "pages": [
-                  "essentials/settings",
-                  "essentials/navigation"
-                ]
+                "pages": ["essentials/settings", "essentials/navigation"]
               },
               {
                 "group": "Writing content",
@@ -63,9 +57,7 @@
             "groups": [
               {
                 "group": "API documentation",
-                "pages": [
-                  "api-reference/introduction"
-                ]
+                "pages": ["api-reference/introduction"]
               },
               {
                 "group": "Endpoint examples",
@@ -88,18 +80,11 @@
             "groups": [
               {
                 "group": "시작하기",
-                "pages": [
-                  "ko/index",
-                  "ko/quickstart",
-                  "ko/development"
-                ]
+                "pages": ["ko/index", "ko/quickstart", "ko/development"]
               },
               {
                 "group": "사용자 지정",
-                "pages": [
-                  "ko/essentials/settings",
-                  "ko/essentials/navigation"
-                ]
+                "pages": ["ko/essentials/settings", "ko/essentials/navigation"]
               },
               {
                 "group": "콘텐츠 작성",
@@ -129,9 +114,7 @@
             "groups": [
               {
                 "group": "API 문서",
-                "pages": [
-                  "ko/api-reference/introduction"
-                ]
+                "pages": ["ko/api-reference/introduction"]
               },
               {
                 "group": "엔드포인트 예시",
