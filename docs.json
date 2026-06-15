@@ -16,7 +16,8 @@
             "index",
             "quickstart",
             "dogpage",
-            "autumn/mounted-openapi-test"
+            "autumn/mounted-openapi-test",
+            "root-openapi-test"
           ]
       }
     ],
