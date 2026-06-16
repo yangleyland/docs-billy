@@ -18,6 +18,7 @@
   "navigation": {
     "pages": [
       {
+        "public":true,
         "group": "Getting Started",
           "pages": [
             "index",
