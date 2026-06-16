@@ -8,6 +8,13 @@
     "dark": "#15803D"
   },
   "favicon": "/favicon.svg",
+  "api": {
+    "openapi": [
+      "openapi.yaml",
+      "autumn/specs/openapi.yaml",
+      "autumn/specs/payments.yaml"
+    ]
+  },
   "navigation": {
     "pages": [
       {
@@ -17,6 +24,8 @@
             "quickstart",
             "dogpage",
             "autumn/mounted-openapi-test",
+            "autumn/named-payments-openapi-test",
+            "autumn/reference/parent-relative-openapi-test",
             "root-openapi-test"
           ]
       }

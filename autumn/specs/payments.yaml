@@ -1,16 +1,18 @@
 openapi: 3.1.0
 info:
-  title: Mounted OpenAPI Test API
+  title: Payments API
   version: 1.0.0
+servers:
+  - url: https://api.example.com/payments
 paths:
   /users:
     get:
-      summary: List users
-      description: Returns mounted users from the autumn source.
-      operationId: listUsers
+      summary: List payment users
+      description: Returns users available through the payments API.
+      operationId: listPaymentUsers
       responses:
         "200":
-          description: A list of users.
+          description: A list of payment users.
           content:
             application/json:
               schema:
@@ -22,11 +24,11 @@ paths:
                       type: object
                       required:
                         - id
-                        - name
+                        - plan
                       properties:
                         id:
                           type: string
-                          example: user_123
-                        name:
+                          example: payment_user_123
+                        plan:
                           type: string
-                          example: Ada Lovelace
+                          example: pro
