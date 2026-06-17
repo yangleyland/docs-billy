@@ -29,7 +29,21 @@
             "autumn/reference/parent-relative-openapi-test",
             "root-openapi-test"
           ]
-      }
+      },
+      {
+        "group": "Getting Started",
+        "public": true,
+        "pages": [
+          "index",
+          "quickstart",
+          "dogpage",
+          "autumn/mounted-openapi-test",
+          "autumn/named-payments-openapi-test",
+          "autumn/reference/parent-relative-openapi-test",
+          "root-openapi-test"
+        ]
+      },
+      "test-page"
     ],
     "global": {
       "anchors": [
